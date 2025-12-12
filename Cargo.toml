@@ -1,8 +1,9 @@
 [package]
 name = "potassium"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/cohaereo/potassium"
 authors = ["cohaereo <cohae@cohae.dev>"]
 description = "A lean and mean job scheduler"
 categories = ["concurrency", "asynchronous"]
