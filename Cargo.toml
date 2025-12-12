@@ -1,5 +1,5 @@
 [package]
-name = "pulsar-jobs"
+name = "potassium"
 version = "0.0.0"
 edition = "2024"
 
@@ -9,5 +9,13 @@ context = "3.0.0"
 parking_lot = "0.12.5"
 smallvec = "1.15.1"
 log = "0.4.28"
-profiling = "1.0.17"
+profiling = { version = "1.0.17", features = ["profile-with-tracy"] }
 tracy-client = "0.18.3"
+
+[dev-dependencies]
+criterion = "0.8"
+crossbeam-channel = "0.5.15"
+
+[[bench]]
+name = "job_benchmarks"
+harness = false

@@ -27,6 +27,7 @@ enum JobState {
     Finished,
 }
 
+#[derive(Clone)]
 pub struct Scheduler {
     state: Arc<Mutex<SchedulerState>>,
 }
@@ -140,75 +141,89 @@ impl Scheduler {
     pub fn resume(&self) {
         self.state.lock().paused = false;
     }
+}
 
-    pub fn shutdown(&self) {
+impl Drop for Scheduler {
+    fn drop(&mut self) {
         {
             let mut state = self.state.lock();
             state.exiting = true;
         }
 
-        for handle in std::mem::take(&mut self.state.lock()._threads) {
-            handle.join().expect("Failed to join scheduler thread");
+        let threads = std::mem::take(&mut self.state.lock()._threads);
+        for handle in threads {
+            let _ = handle.join();
         }
     }
 }
 
 fn scheduler_thread(state: Arc<Mutex<SchedulerState>>) {
     'thread: loop {
-        let job_id = 'work_search: loop {
-            {
-                let state = state.lock();
-                if state.paused {
-                    std::thread::yield_now();
-                    continue 'work_search;
+        let job_id = {
+            profiling::scope!("Searching for work");
+            'work_search: loop {
+                {
+                    let state = {
+                        profiling::scope!("Acquiring lock to check paused/exiting state");
+                        state.lock()
+                    };
+                    if state.paused {
+                        std::thread::yield_now();
+                        continue 'work_search;
+                    }
+                    if state.exiting {
+                        break 'thread;
+                    }
                 }
-                if state.exiting {
-                    break 'thread;
-                }
-            }
 
-            {
-                let SchedulerState {
-                    ready_jobs, jobs, ..
-                } = &mut *state.lock();
-                for priority_queue in ready_jobs.iter_mut().rev() {
-                    // Check dependencies before popping
-                    let mut to_remove = None;
-                    'find_job_in_queue: for (index, &job_id) in priority_queue.iter().enumerate() {
-                        let job = match jobs.get(&job_id) {
-                            Some(job) => job,
-                            None => continue 'find_job_in_queue, // Job might have been removed
-                        };
-                        let mut conditions_met = true;
-                        for &dep_id in &job.spec.dependencies {
-                            if jobs.contains_key(&dep_id) {
+                {
+                    let SchedulerState {
+                        ready_jobs, jobs, ..
+                    } = &mut *{
+                        profiling::scope!("Acquiring lock for work search");
+                        state.lock()
+                    };
+                    for priority_queue in ready_jobs.iter_mut().rev() {
+                        // Check dependencies before popping
+                        let mut to_remove = None;
+                        'find_job_in_queue: for (index, &job_id) in
+                            priority_queue.iter().enumerate()
+                        {
+                            let job = match jobs.get(&job_id) {
+                                Some(job) => job,
+                                None => continue 'find_job_in_queue, // Job might have been removed
+                            };
+                            let mut conditions_met = true;
+                            for &dep_id in &job.spec.dependencies {
+                                if jobs.contains_key(&dep_id) {
+                                    conditions_met = false;
+                                    break;
+                                }
+                            }
+
+                            if let Some(condition) = &job.spec.condition
+                                && !condition.is_met()
+                            {
                                 conditions_met = false;
                             }
-                            break;
+
+                            if conditions_met {
+                                to_remove = Some(index);
+                                break 'find_job_in_queue;
+                            }
                         }
 
-                        if let Some(condition) = &job.spec.condition
-                            && !condition.is_met()
-                        {
-                            conditions_met = false;
+                        if let Some(index) = to_remove {
+                            let job_id = priority_queue
+                                .remove(index)
+                                .expect("Job no longer exists in ready queue");
+                            break 'work_search job_id;
                         }
-
-                        if conditions_met {
-                            to_remove = Some(index);
-                            break 'find_job_in_queue;
-                        }
-                    }
-
-                    if let Some(index) = to_remove {
-                        let job_id = priority_queue
-                            .remove(index)
-                            .expect("Job no longer exists in ready queue");
-                        break 'work_search job_id;
                     }
                 }
-            }
 
-            std::thread::yield_now();
+                std::thread::yield_now();
+            }
         };
 
         let (ctx, name) = {
