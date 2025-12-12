@@ -1,11 +1,12 @@
 use crate::scheduler::{JobId, Scheduler};
 use crate::spec::job_spec_builder::{IsComplete, IsUnset, SetCondition, State};
+use crate::util::SharedString;
 use smallvec::SmallVec;
 
 #[derive(bon::Builder)]
 pub struct JobSpec {
     #[builder(start_fn, into)]
-    pub name: String,
+    pub name: SharedString,
     pub priority: Priority,
     #[builder(default = StackSize::Small)]
     pub stack_size: StackSize,

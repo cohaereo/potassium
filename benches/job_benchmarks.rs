@@ -1,6 +1,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use potassium::scheduler::Scheduler;
 use potassium::spec::{JobSpec, Priority};
+use std::num;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -16,37 +17,58 @@ fn scheduler_benchmark(c: &mut Criterion) {
         worker_count.sort_unstable();
     }
 
-    for job_count in [100, 1_000, 10_000] {
-        let mut group = c.benchmark_group(format!("many_small_jobs_j{job_count}"));
-        for &worker_count in &worker_count {
-            group.bench_with_input(
-                BenchmarkId::from_parameter(format!("w{:02}", worker_count)),
-                &(worker_count, job_count),
-                |b, &(workers, jobs)| {
-                    let scheduler = Scheduler::new(workers);
-                    b.iter(|| {
-                        let counter = Arc::new(AtomicUsize::new(0));
+    for (kind_name, num_operations) in
+        [("tiny_jobs", 100), ("small_jobs", 1_000), ("jobs", 100_000)]
+    {
+        for job_count in [100, 1_000, 10_000] {
+            let mut group = c.benchmark_group(format!("many_{kind_name}_j{job_count}"));
 
-                        for _ in 0..jobs {
-                            let c = Arc::clone(&counter);
-                            JobSpec::builder("small_job")
-                                .priority(Priority::Medium)
-                                .schedule(&scheduler, move || {
-                                    // Small amount of work
-                                    let mut sum = 0u64;
-                                    for i in 0..50 {
-                                        sum = sum.wrapping_add(i);
-                                    }
-                                    c.fetch_add(sum as usize, Ordering::Relaxed);
-                                });
+            group.bench_with_input(BenchmarkId::from_parameter("baseline"), &(), |b, &_| {
+                b.iter(|| {
+                    let counter = Arc::new(AtomicUsize::new(0));
+
+                    for _ in 0..job_count {
+                        let c = Arc::clone(&counter);
+                        // Small amount of work
+                        let mut sum = 0u64;
+                        for i in 0..num_operations {
+                            sum = std::hint::black_box(sum.wrapping_add(i));
                         }
+                        c.fetch_add(sum as usize, Ordering::Relaxed);
+                    }
+                });
+            });
 
-                        scheduler.wait_for_all();
-                    });
-                },
-            );
+            for &worker_count in &worker_count {
+                group.bench_with_input(
+                    BenchmarkId::from_parameter(format!("w{:02}", worker_count)),
+                    &(worker_count, job_count),
+                    |b, &(workers, jobs)| {
+                        let scheduler = Scheduler::new(workers);
+                        b.iter(|| {
+                            let counter = Arc::new(AtomicUsize::new(0));
+
+                            for _ in 0..jobs {
+                                let c = Arc::clone(&counter);
+                                JobSpec::builder("small_job")
+                                    .priority(Priority::Medium)
+                                    .schedule(&scheduler, move || {
+                                        // Small amount of work
+                                        let mut sum = 0u64;
+                                        for i in 0..num_operations {
+                                            sum = std::hint::black_box(sum.wrapping_add(i));
+                                        }
+                                        c.fetch_add(sum as usize, Ordering::Relaxed);
+                                    });
+                            }
+
+                            scheduler.wait_for_all();
+                        });
+                    },
+                );
+            }
+            group.finish();
         }
-        group.finish();
     }
 
     // Benchmark 2: Priority scheduling stress test

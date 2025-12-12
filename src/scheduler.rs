@@ -159,71 +159,9 @@ impl Drop for Scheduler {
 
 fn scheduler_thread(state: Arc<Mutex<SchedulerState>>) {
     'thread: loop {
-        let job_id = {
-            profiling::scope!("Searching for work");
-            'work_search: loop {
-                {
-                    let state = {
-                        profiling::scope!("Acquiring lock to check paused/exiting state");
-                        state.lock()
-                    };
-                    if state.paused {
-                        std::thread::yield_now();
-                        continue 'work_search;
-                    }
-                    if state.exiting {
-                        break 'thread;
-                    }
-                }
-
-                {
-                    let SchedulerState {
-                        ready_jobs, jobs, ..
-                    } = &mut *{
-                        profiling::scope!("Acquiring lock for work search");
-                        state.lock()
-                    };
-                    for priority_queue in ready_jobs.iter_mut().rev() {
-                        // Check dependencies before popping
-                        let mut to_remove = None;
-                        'find_job_in_queue: for (index, &job_id) in
-                            priority_queue.iter().enumerate()
-                        {
-                            let job = match jobs.get(&job_id) {
-                                Some(job) => job,
-                                None => continue 'find_job_in_queue, // Job might have been removed
-                            };
-                            let mut conditions_met = true;
-                            for &dep_id in &job.spec.dependencies {
-                                if jobs.contains_key(&dep_id) {
-                                    conditions_met = false;
-                                    break;
-                                }
-                            }
-
-                            if let Some(condition) = &job.spec.condition
-                                && !condition.is_met()
-                            {
-                                conditions_met = false;
-                            }
-
-                            if conditions_met {
-                                to_remove = Some(index);
-                                break 'find_job_in_queue;
-                            }
-                        }
-
-                        if let Some(index) = to_remove {
-                            let job_id = priority_queue
-                                .remove(index)
-                                .expect("Job no longer exists in ready queue");
-                            break 'work_search job_id;
-                        }
-                    }
-                }
-
-                std::thread::yield_now();
-            }
+        let job_id = match find_work(Arc::clone(&state)) {
+            Some(id) => id,
+            None => break 'thread, // Scheduler is exiting
         };
 
         let (ctx, name) = {
@@ -233,7 +171,7 @@ fn scheduler_thread(state: Arc<Mutex<SchedulerState>>) {
                 continue;
             };
             job.state = JobState::Running;
-            (job.context.take(), job.spec.name.clone()) // TODO(cohae): Cloning the name feels wasteful?
+            (job.context.take(), job.spec.name.handle())
         };
 
         let Some(ctx) = ctx else {
@@ -254,6 +192,73 @@ fn scheduler_thread(state: Arc<Mutex<SchedulerState>>) {
                 state.jobs.remove(&job_id);
             }
         }
+    }
+}
+
+/// Searches for a job that is ready to run, taking into account dependencies and conditions.
+///
+/// Returns `Some(JobId)` if a job is found, or `None` if the scheduler is exiting.
+fn find_work(state: Arc<Mutex<SchedulerState>>) -> Option<JobId> {
+    'work_search: loop {
+        {
+            let state = {
+                profiling::scope!("Acquiring lock to check paused/exiting state");
+                state.lock()
+            };
+            if state.paused {
+                std::thread::yield_now();
+                continue 'work_search;
+            }
+            if state.exiting {
+                return None;
+            }
+        }
+
+        {
+            let SchedulerState {
+                ready_jobs, jobs, ..
+            } = &mut *{
+                profiling::scope!("Acquiring lock for work search");
+                state.lock()
+            };
+            for priority_queue in ready_jobs.iter_mut().rev() {
+                // Check dependencies before popping
+                let mut to_remove = None;
+                'find_job_in_queue: for (index, &job_id) in priority_queue.iter().enumerate() {
+                    let job = match jobs.get(&job_id) {
+                        Some(job) => job,
+                        None => continue 'find_job_in_queue, // Job might have been removed
+                    };
+                    let mut conditions_met = true;
+                    for &dep_id in &job.spec.dependencies {
+                        if jobs.contains_key(&dep_id) {
+                            conditions_met = false;
+                            break;
+                        }
+                    }
+
+                    if let Some(condition) = &job.spec.condition
+                        && !condition.is_met()
+                    {
+                        conditions_met = false;
+                    }
+
+                    if conditions_met {
+                        to_remove = Some(index);
+                        break 'find_job_in_queue;
+                    }
+                }
+
+                if let Some(index) = to_remove {
+                    let job_id = priority_queue
+                        .remove(index)
+                        .expect("Job no longer exists in ready queue");
+                    return Some(job_id);
+                }
+            }
+        }
+
+        std::thread::yield_now();
     }
 }
 
