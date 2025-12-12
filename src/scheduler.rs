@@ -1,5 +1,4 @@
 use crate::spec::{JobSpec, Priority};
-use context::stack::ProtectedFixedSizeStack;
 use log::error;
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
@@ -23,7 +22,6 @@ struct Job {
 enum JobState {
     Ready,
     Running,
-    Yielded,
     Finished,
 }
 
@@ -47,7 +45,6 @@ struct SchedulerState {
 
 struct JobExecutionContext {
     job_id: JobId,
-    stack: ProtectedFixedSizeStack,
     body: Box<dyn FnOnce() + Send + 'static>,
 }
 
@@ -91,8 +88,6 @@ impl Scheduler {
                 context: Some(JobExecutionContext {
                     job_id,
                     body: Box::new(body),
-                    stack: ProtectedFixedSizeStack::new(spec.stack_size.as_bytes())
-                        .expect("Failed to create protected stack for job execution context"),
                 }),
                 spec,
             },

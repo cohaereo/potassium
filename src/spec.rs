@@ -8,8 +8,6 @@ pub struct JobSpec {
     #[builder(start_fn, into)]
     pub name: SharedString,
     pub priority: Priority,
-    #[builder(default = StackSize::Small)]
-    pub stack_size: StackSize,
 
     #[builder(default, into)]
     pub dependencies: SmallVec<[JobId; 4]>,
@@ -48,23 +46,6 @@ pub enum Priority {
 
 impl Priority {
     pub const COUNT: usize = 3;
-}
-
-#[derive(Debug, Copy, Clone, PartialOrd, PartialEq)]
-pub enum StackSize {
-    /// 32KB stack
-    Small,
-    /// 256KB stack
-    Large,
-}
-
-impl StackSize {
-    pub fn as_bytes(&self) -> usize {
-        match self {
-            StackSize::Small => 32 * 1024,
-            StackSize::Large => 256 * 1024,
-        }
-    }
 }
 
 pub trait JobCondition: Send {
