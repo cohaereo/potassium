@@ -17,3 +17,7 @@ crossbeam-channel = "0.5.15"
 [[bench]]
 name = "job_benchmarks"
 harness = false
+
+[profile.profiling]
+inherits = "release"
+debug = true

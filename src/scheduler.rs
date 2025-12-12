@@ -10,7 +10,6 @@ pub struct JobId(usize);
 struct Job {
     spec: JobSpec,
     state: JobState,
-    spawned_at: std::time::Instant,
 
     /// Execution context for the job.
     ///
@@ -84,7 +83,6 @@ impl Scheduler {
             job_id,
             Job {
                 state: JobState::Ready,
-                spawned_at: std::time::Instant::now(),
                 context: Some(JobExecutionContext {
                     job_id,
                     body: Box::new(body),
@@ -175,6 +173,7 @@ fn scheduler_thread(state: Arc<Mutex<SchedulerState>>) {
         };
 
         {
+            let _ = name; // Silence unused variable warning if profiling is disabled
             profiling::scope!(&name);
             (ctx.body)();
         }
@@ -196,10 +195,7 @@ fn scheduler_thread(state: Arc<Mutex<SchedulerState>>) {
 fn find_work(state: Arc<Mutex<SchedulerState>>) -> Option<JobId> {
     'work_search: loop {
         {
-            let state = {
-                profiling::scope!("Acquiring lock to check paused/exiting state");
-                state.lock()
-            };
+            let state = { state.lock() };
             if state.paused {
                 std::thread::yield_now();
                 continue 'work_search;
@@ -212,10 +208,7 @@ fn find_work(state: Arc<Mutex<SchedulerState>>) -> Option<JobId> {
         {
             let SchedulerState {
                 ready_jobs, jobs, ..
-            } = &mut *{
-                profiling::scope!("Acquiring lock for work search");
-                state.lock()
-            };
+            } = &mut *{ state.lock() };
             for priority_queue in ready_jobs.iter_mut().rev() {
                 // Check dependencies before popping
                 let mut to_remove = None;

@@ -1,7 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use potassium::scheduler::Scheduler;
 use potassium::spec::{JobSpec, Priority};
-use std::num;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -17,11 +16,13 @@ fn scheduler_benchmark(c: &mut Criterion) {
         worker_count.sort_unstable();
     }
 
-    for (kind_name, num_operations) in
-        [("tiny_jobs", 100), ("small_jobs", 1_000), ("jobs", 100_000)]
-    {
-        for job_count in [100, 1_000, 10_000] {
-            let mut group = c.benchmark_group(format!("many_{kind_name}_j{job_count}"));
+    for (kind_name, num_operations) in [
+        // ("tiny_job", 100),
+        ("small_job", 1_000),
+        ("job", 100_000),
+    ] {
+        for job_count in [100, 1_000] {
+            let mut group = c.benchmark_group(format!("many_{kind_name}s_j{job_count}"));
 
             group.bench_with_input(BenchmarkId::from_parameter("baseline"), &(), |b, &_| {
                 b.iter(|| {
@@ -50,7 +51,7 @@ fn scheduler_benchmark(c: &mut Criterion) {
 
                             for _ in 0..jobs {
                                 let c = Arc::clone(&counter);
-                                JobSpec::builder("small_job")
+                                JobSpec::builder(kind_name)
                                     .priority(Priority::Medium)
                                     .schedule(&scheduler, move || {
                                         // Small amount of work
