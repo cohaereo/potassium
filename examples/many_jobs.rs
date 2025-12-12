@@ -48,7 +48,7 @@ fn main() {
 
             for &worker_count in &worker_count {
                 let start = std::time::Instant::now();
-                let scheduler = Scheduler::new(worker_count);
+                let scheduler = Scheduler::with_workers(worker_count);
                 let counter = Arc::new(AtomicUsize::new(0));
 
                 for _ in 0..job_count {

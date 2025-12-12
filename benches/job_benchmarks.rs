@@ -45,7 +45,7 @@ fn scheduler_benchmark(c: &mut Criterion) {
                     BenchmarkId::from_parameter(format!("w{:02}", worker_count)),
                     &(worker_count, job_count),
                     |b, &(workers, jobs)| {
-                        let scheduler = Scheduler::new(workers);
+                        let scheduler = Scheduler::with_workers(workers);
                         b.iter(|| {
                             let counter = Arc::new(AtomicUsize::new(0));
 
@@ -79,7 +79,7 @@ fn scheduler_benchmark(c: &mut Criterion) {
             BenchmarkId::from_parameter(job_count),
             &job_count,
             |b, &jobs| {
-                let scheduler = Scheduler::new(cpus);
+                let scheduler = Scheduler::with_workers(cpus);
                 b.iter(|| {
                     // Mix of priorities
                     for i in 0..jobs {
@@ -113,7 +113,7 @@ fn scheduler_benchmark(c: &mut Criterion) {
             BenchmarkId::from_parameter(chain_length),
             &chain_length,
             |b, &length| {
-                let scheduler = Scheduler::new(cpus);
+                let scheduler = Scheduler::with_workers(cpus);
                 b.iter(|| {
                     let mut prev_job = None;
                     for _ in 0..length {
@@ -148,7 +148,7 @@ fn scheduler_benchmark(c: &mut Criterion) {
             BenchmarkId::from_parameter(num_chains),
             &num_chains,
             |b, &chains| {
-                let scheduler = Scheduler::new(cpus);
+                let scheduler = Scheduler::with_workers(cpus);
                 b.iter(|| {
                     for _ in 0..chains {
                         let mut prev = None;
@@ -186,7 +186,7 @@ fn scheduler_benchmark(c: &mut Criterion) {
             BenchmarkId::from_parameter(wave_count),
             &wave_count,
             |b, &waves| {
-                let scheduler = Scheduler::new(cpus);
+                let scheduler = Scheduler::with_workers(cpus);
                 b.iter(|| {
                     for _ in 0..waves {
                         for _ in 0..100 {
@@ -213,7 +213,7 @@ fn scheduler_benchmark(c: &mut Criterion) {
 
     // Benchmark 6: Mixed workload (different job sizes)
     c.bench_function("mixed_workload", |b| {
-        let scheduler = Scheduler::new(cpus);
+        let scheduler = Scheduler::with_workers(cpus);
         b.iter(|| {
             // 80% small jobs, 15% medium, 5% large
             for i in 0..1000 {

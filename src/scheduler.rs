@@ -48,9 +48,14 @@ struct JobExecutionContext {
 }
 
 impl Scheduler {
-    pub fn new(num_threads: usize) -> Self {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self::with_workers(num_cpus::get_physical())
+    }
+
+    pub fn with_workers(num_workers: usize) -> Self {
         let state = Arc::new(Mutex::new(SchedulerState {
-            _threads: Vec::with_capacity(num_threads),
+            _threads: Vec::with_capacity(num_workers),
             jobs: HashMap::new(),
             next_job_id: 1,
             ready_jobs: Default::default(),
@@ -58,7 +63,7 @@ impl Scheduler {
             exiting: false,
         }));
 
-        for i in 0..num_threads {
+        for i in 0..num_workers {
             let state_clone = Arc::clone(&state);
             let handle = std::thread::Builder::new()
                 .name(format!("job-executor-{}", i))
@@ -258,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_simple_jobs() {
-        let scheduler = Scheduler::new(4);
+        let scheduler = Scheduler::with_workers(4);
 
         static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -278,7 +283,7 @@ mod tests {
     // Launch multiple jobs, but only wait for one of them to complete
     #[test]
     fn wait_for_single_job() {
-        let scheduler = Scheduler::new(5);
+        let scheduler = Scheduler::with_workers(5);
 
         static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -302,7 +307,7 @@ mod tests {
 
     #[test]
     fn job_priorities() {
-        let scheduler = Scheduler::new(1);
+        let scheduler = Scheduler::with_workers(1);
 
         static ORDER: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
@@ -335,7 +340,7 @@ mod tests {
 
     #[test]
     fn job_dependencies() {
-        let scheduler = Scheduler::new(3);
+        let scheduler = Scheduler::with_workers(3);
 
         static LOG: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
@@ -376,7 +381,7 @@ mod tests {
 
     #[test]
     fn job_conditions() {
-        let scheduler = Scheduler::new(2);
+        let scheduler = Scheduler::with_workers(2);
 
         static LOG: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
         static CONDITION_MET: std::sync::atomic::AtomicBool =
