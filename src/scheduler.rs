@@ -77,6 +77,10 @@ impl Scheduler {
         Scheduler { state }
     }
 
+    pub fn num_workers(&self) -> usize {
+        self.state.lock()._threads.len()
+    }
+
     pub fn schedule_job<F>(&self, spec: JobSpec, body: F) -> JobId
     where
         F: FnOnce() + Send + 'static,
