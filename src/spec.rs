@@ -1,39 +1,38 @@
-use crate::scheduler::{JobId, Scheduler};
-use crate::spec::job_spec_builder::{IsComplete, IsUnset, SetCondition, State};
+use crate::JobId;
+use crate::scheduler::Scheduler;
+use crate::spec::job_spec_builder::{IsComplete, State};
 use crate::util::SharedString;
 use smallvec::SmallVec;
 
 #[derive(bon::Builder)]
-pub struct JobSpec {
+pub struct JobSpec<'a> {
+    #[builder(start_fn)]
+    _scheduler: &'a Scheduler,
+
     #[builder(start_fn, into)]
     pub name: SharedString,
     pub priority: Priority,
 
     #[builder(default, into)]
     pub dependencies: SmallVec<[JobId; 4]>,
-
-    #[builder(setters(vis = "", name = condition_internal))]
-    pub condition: Option<Box<dyn JobCondition>>,
 }
 
-impl<S: State> JobSpecBuilder<S> {
-    pub fn schedule<F>(self, scheduler: &Scheduler, body: F) -> JobId
+impl<'a, S: State> JobSpecBuilder<'a, S> {
+    pub fn spawn<F>(self, body: F) -> JobId
     where
         S: IsComplete,
         F: FnOnce() + Send + 'static,
     {
-        let spec = self.build();
-        scheduler.schedule_job(spec, body)
+        self._scheduler.spawn(self, body)
     }
+}
 
-    pub fn condition(
-        self,
-        condition: impl JobCondition + 'static,
-    ) -> JobSpecBuilder<SetCondition<S>>
-    where
-        S::Condition: IsUnset,
-    {
-        self.condition_internal(Box::new(condition))
+impl<'a, S: State> From<JobSpecBuilder<'a, S>> for JobSpec<'a>
+where
+    S: IsComplete,
+{
+    fn from(val: JobSpecBuilder<'a, S>) -> Self {
+        val.build()
     }
 }
 
@@ -45,18 +44,6 @@ pub enum Priority {
 }
 
 impl Priority {
+    pub const ALL: [Priority; 3] = [Priority::High, Priority::Medium, Priority::Low];
     pub const COUNT: usize = 3;
-}
-
-pub trait JobCondition: Send {
-    fn is_met(&self) -> bool;
-}
-
-impl<F> JobCondition for F
-where
-    F: Fn() -> bool + Send,
-{
-    fn is_met(&self) -> bool {
-        self()
-    }
 }
