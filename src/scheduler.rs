@@ -34,7 +34,7 @@ pub struct Scheduler {
 impl Scheduler {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        Self::with_workers(num_cpus::get_physical())
+        Self::with_workers(gdt_cpus::num_physical_cores().unwrap_or(4))
     }
 
     pub fn with_workers(num_workers: usize) -> Self {

@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 pub mod job;
 pub mod scheduler;
 pub mod spec;
