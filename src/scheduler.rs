@@ -1,13 +1,11 @@
+use crate::job::JobHandle;
 use crate::spec::Priority;
 use crate::{
-    JobId,
-    job::Job,
     spec::{JobSpec, JobSpecBuilder},
     util::SharedString,
 };
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use parking_lot::Mutex;
-use slotmap::Key;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::thread::JoinHandle;
@@ -91,17 +89,22 @@ impl Scheduler {
         self.inner.num_workers
     }
 
-    pub fn spawn<'a, F>(&'a self, spec: impl Into<JobSpec<'a>>, body: F) -> JobId
+    pub fn spawn<'a, F>(&'a self, spec: impl Into<JobSpec<'a>>, body: F) -> JobHandle
     where
         F: FnOnce() + Send + 'static,
     {
-        let job = Job::new(spec.into(), body);
-        self.inner.injectors.push(job);
+        let handle = JobHandle::new(spec.into(), body);
+
+        // If the job has no dependencies, push it to the global injector
+        // Otherwise, it will be scheduled into the local queue of the worker that completes its last dependency
+        if handle.dependencies().is_empty() {
+            self.inner.injectors.push(handle.clone());
+        }
         self.inner
             .num_jobs_queued
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 
-        JobId::null()
+        handle
     }
 
     pub fn job_builder(&'_ self, name: impl Into<SharedString>) -> JobSpecBuilder<'_> {
@@ -132,7 +135,7 @@ impl Scheduler {
     }
 
     #[profiling::function]
-    fn try_steal_job(&self, work_queues: &WorkQueues) -> Option<Job> {
+    fn try_steal_job(&self, work_queues: &WorkQueues) -> Option<JobHandle> {
         for stealer in &self.inner.stealers {
             if stealer.owner == work_queues.owner {
                 continue;
@@ -194,9 +197,9 @@ impl WorkerId {
 }
 
 struct Injectors {
-    high: Injector<Job>,
-    medium: Injector<Job>,
-    low: Injector<Job>,
+    high: Injector<JobHandle>,
+    medium: Injector<JobHandle>,
+    low: Injector<JobHandle>,
 }
 
 impl Injectors {
@@ -208,8 +211,8 @@ impl Injectors {
         }
     }
 
-    pub fn push(&self, job: Job) {
-        match job.priority {
+    pub fn push(&self, job: JobHandle) {
+        match job.priority() {
             Priority::High => self.high.push(job),
             Priority::Medium => self.medium.push(job),
             Priority::Low => self.low.push(job),
@@ -217,7 +220,7 @@ impl Injectors {
     }
 
     #[profiling::function]
-    fn steal_batch_and_pop(&self, work_queues: &WorkQueues) -> Option<Job> {
+    fn steal_batch_and_pop(&self, work_queues: &WorkQueues) -> Option<JobHandle> {
         for priority in Priority::ALL {
             let injector = match priority {
                 Priority::High => &self.high,
@@ -247,16 +250,16 @@ impl Injectors {
 
 struct WorkStealers {
     owner: WorkerId,
-    high: Stealer<Job>,
-    medium: Stealer<Job>,
-    low: Stealer<Job>,
+    high: Stealer<JobHandle>,
+    medium: Stealer<JobHandle>,
+    low: Stealer<JobHandle>,
 }
 
 struct WorkQueues {
     owner: WorkerId,
-    high: Worker<Job>,
-    medium: Worker<Job>,
-    low: Worker<Job>,
+    high: Worker<JobHandle>,
+    medium: Worker<JobHandle>,
+    low: Worker<JobHandle>,
 }
 
 impl WorkQueues {
@@ -294,7 +297,7 @@ struct WorkerContext {
 
 impl WorkerContext {
     #[profiling::function]
-    fn fetch_job(&self) -> Option<Job> {
+    fn fetch_job(&self) -> Option<JobHandle> {
         // Check local queues first
         for priority in Priority::ALL {
             let job = match priority {
@@ -319,6 +322,14 @@ impl WorkerContext {
             .steal_batch_and_pop(&self.queues)
     }
 
+    fn push_job(&self, job: JobHandle) {
+        match job.priority() {
+            Priority::High => self.queues.high.push(job),
+            Priority::Medium => self.queues.medium.push(job),
+            Priority::Low => self.queues.low.push(job),
+        }
+    }
+
     fn is_exiting(&self) -> bool {
         self.scheduler
             .inner
@@ -334,8 +345,10 @@ impl WorkerContext {
     }
 }
 
+#[profiling::function]
 fn worker_thread(ctx: WorkerContext) {
     loop {
+        profiling::scope!("worker_loop");
         if ctx.is_exiting() {
             break;
         }
@@ -347,27 +360,45 @@ fn worker_thread(ctx: WorkerContext) {
             .load(std::sync::atomic::Ordering::Acquire);
 
         if num_jobs_queued == 0 || ctx.is_paused() {
+            profiling::scope!("paused");
             std::thread::yield_now();
             continue;
         }
 
         if let Some(job) = ctx.fetch_job() {
             {
-                profiling::scope!("execute_job", &job.name);
+                profiling::scope!("execute_job", job.name());
                 // Execute the job
-                (job.body)();
+                let Some(job_body) = (unsafe { job.take_body() }) else {
+                    panic!("Job body already taken for job {}", job.name());
+                };
+                (job_body)();
+
+                job.set_completed();
             }
+
+            notify_dependents(&ctx, &job);
 
             // Decrement the queued job count
             ctx.scheduler
                 .inner
                 .num_jobs_queued
                 .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
-        } else {
-            profiling::scope!("idle");
-            // No job found, yield to avoid busy waiting
-            std::thread::yield_now();
-            // std::hint::spin_loop();
+        }
+    }
+}
+
+#[profiling::function]
+fn notify_dependents(ctx: &WorkerContext, job: &JobHandle) {
+    for dependent in job.inner.dependents.read().iter() {
+        let remaining = dependent
+            .inner
+            .remaining_dependencies
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+
+        if remaining == 1 {
+            // All dependencies are complete, schedule the dependent job
+            ctx.push_job(dependent.clone());
         }
     }
 }
@@ -398,31 +429,31 @@ mod tests {
         assert_eq!(COUNTER.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
-    // // Launch multiple jobs, but only wait for one of them to complete
-    // #[test]
-    // fn wait_for_single_job() {
-    //     let scheduler = Scheduler::with_workers(5);
+    // Launch multiple jobs, but only wait for one of them to complete
+    #[test]
+    fn wait_for_single_job() {
+        let scheduler = Scheduler::with_workers(5);
 
-    //     static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-    //     let mut job_ids = Vec::new();
-    //     for i in 0..5 {
-    //         let id = scheduler
-    //             .job_builder("wait_single")
-    //             .priority(Priority::Medium)
-    //             .spawn(move || {
-    //                 println!("Job {i} starting.");
-    //                 std::thread::sleep(std::time::Duration::from_millis(120 * (i + 1) as u64));
-    //                 println!("Job {i} completed.");
-    //                 COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    //             });
-    //         job_ids.push(id);
-    //     }
+        let mut job_ids = Vec::new();
+        for i in 0..5 {
+            let id = scheduler
+                .job_builder("wait_single")
+                .priority(Priority::Medium)
+                .spawn(move || {
+                    println!("Job {i} starting.");
+                    std::thread::sleep(std::time::Duration::from_millis(120 * (i + 1) as u64));
+                    println!("Job {i} completed.");
+                    COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                });
+            job_ids.push(id);
+        }
 
-    //     // Wait for the third job only (effectively waiting for the first and second to finish too)
-    //     scheduler.wait_for(job_ids[2]);
-    //     assert_eq!(COUNTER.load(std::sync::atomic::Ordering::SeqCst), 3);
-    // }
+        // Wait for the third job only (effectively waiting for the first and second to finish too)
+        job_ids[2].wait();
+        assert_eq!(COUNTER.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
 
     #[test]
     fn job_priorities() {
@@ -458,46 +489,50 @@ mod tests {
         assert_eq!(*order, vec![2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0]); // High priority (2) should execute first
     }
 
-    // #[test]
-    // fn job_dependencies() {
-    //     let scheduler = Scheduler::with_workers(3);
+    #[test]
+    fn job_dependencies() {
+        let scheduler = Scheduler::with_workers(3);
 
-    //     static LOG: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+        static LOG: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
-    //     let job_a = JobSpec::builder("job_a")
-    //         .priority(Priority::Medium)
-    //         .schedule(&scheduler, || {
-    //             std::thread::sleep(std::time::Duration::from_millis(50));
-    //             LOG.lock().push("A");
-    //         });
+        let job_a = scheduler
+            .job_builder("job_a")
+            .priority(Priority::Medium)
+            .spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                LOG.lock().push("A");
+            });
 
-    //     let job_b = JobSpec::builder("job_b")
-    //         .priority(Priority::Medium)
-    //         .dependencies(vec![job_a])
-    //         .schedule(&scheduler, || {
-    //             std::thread::sleep(std::time::Duration::from_millis(70));
-    //             LOG.lock().push("B");
-    //         });
+        let job_b = scheduler
+            .job_builder("job_b")
+            .priority(Priority::Medium)
+            .dependencies(vec![job_a])
+            .spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(70));
+                LOG.lock().push("B");
+            });
 
-    //     let job_c = JobSpec::builder("job_c")
-    //         .priority(Priority::Medium)
-    //         .dependencies(vec![job_b])
-    //         .schedule(&scheduler, || {
-    //             LOG.lock().push("C");
-    //         });
+        let job_c = scheduler
+            .job_builder("job_c")
+            .priority(Priority::Medium)
+            .dependencies(vec![job_b])
+            .spawn(|| {
+                LOG.lock().push("C");
+            });
 
-    //     let _job_d = JobSpec::builder("job_d")
-    //         .priority(Priority::Medium)
-    //         .dependencies(vec![job_c])
-    //         .schedule(&scheduler, || {
-    //             LOG.lock().push("D");
-    //         });
+        let _job_d = scheduler
+            .job_builder("job_d")
+            .priority(Priority::Medium)
+            .dependencies(vec![job_c])
+            .spawn(|| {
+                LOG.lock().push("D");
+            });
 
-    //     scheduler.wait_for_all();
+        scheduler.wait_for_all();
 
-    //     let log = LOG.lock();
-    //     assert_eq!(*log, vec!["A", "B", "C", "D"]); // Jobs should execute in order A -> B -> C
-    // }
+        let log = LOG.lock();
+        assert_eq!(*log, vec!["A", "B", "C", "D"]); // Jobs should execute in order A -> B -> C
+    }
 
     // #[test]
     // fn job_conditions() {
@@ -509,20 +544,20 @@ mod tests {
     //     static NUM_CONDITION_CHECKS: std::sync::atomic::AtomicUsize =
     //         std::sync::atomic::AtomicUsize::new(0);
 
-    //     JobSpec::builder("conditional_job")
+    //     scheduler.job_builder("conditional_job")
     //         .priority(Priority::High)
     //         .condition(|| {
     //             NUM_CONDITION_CHECKS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     //             CONDITION_MET.load(std::sync::atomic::Ordering::SeqCst)
     //         })
-    //         .schedule(&scheduler, || {
+    //         .spawn(|| {
     //             LOG.lock().push("Conditional Job Executed");
     //         });
 
     //     // Schedule a job to set the condition after a delay
-    //     JobSpec::builder("set_condition")
+    //     scheduler.job_builder("set_condition")
     //         .priority(Priority::Low)
-    //         .schedule(&scheduler, || {
+    //         .spawn(|| {
     //             std::thread::sleep(std::time::Duration::from_millis(10));
     //             CONDITION_MET.store(true, std::sync::atomic::Ordering::SeqCst);
     //         });

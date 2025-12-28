@@ -41,11 +41,11 @@ fn scheduler_benchmark(c: &mut Criterion) {
             });
 
             for &worker_count in &worker_count {
+                let scheduler = Scheduler::with_workers(worker_count);
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("w{:02}", worker_count)),
                     &(worker_count, job_count),
                     |b, &(workers, jobs)| {
-                        let scheduler = Scheduler::with_workers(workers);
                         b.iter(|| {
                             let counter = Arc::new(AtomicUsize::new(0));
 
@@ -108,78 +108,81 @@ fn scheduler_benchmark(c: &mut Criterion) {
     }
     group.finish();
 
-    // // Benchmark 3: Dependency chain scheduling
-    // let mut group = c.benchmark_group("dependency_chains");
-    // for chain_length in [10, 50, 100] {
-    //     group.bench_with_input(
-    //         BenchmarkId::from_parameter(chain_length),
-    //         &chain_length,
-    //         |b, &length| {
-    //             let scheduler = Scheduler::with_workers(cpus);
-    //             b.iter(|| {
-    //                 let mut prev_job = None;
-    //                 for _ in 0..length {
-    //                     let builder = JobSpec::builder("chain_job").priority(Priority::Medium);
+    // Benchmark 3: Dependency chain scheduling
+    let mut group = c.benchmark_group("dependency_chains");
+    for chain_length in [10, 50, 100] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(chain_length),
+            &chain_length,
+            |b, &length| {
+                let scheduler = Scheduler::with_workers(cpus);
+                b.iter(|| {
+                    let mut prev_job = None;
+                    for _ in 0..length {
+                        let builder = scheduler
+                            .job_builder("chain_job")
+                            .priority(Priority::Medium);
 
-    //                     let builder = if let Some(dep) = prev_job {
-    //                         builder.dependencies(vec![dep])
-    //                     } else {
-    //                         builder.dependencies(vec![])
-    //                     };
+                        let builder = if let Some(dep) = prev_job {
+                            builder.dependencies(vec![dep])
+                        } else {
+                            builder.dependencies(vec![])
+                        };
 
-    //                     prev_job = Some(builder.schedule(&scheduler, || {
-    //                         let mut sum = 0u64;
-    //                         for i in 0..20 {
-    //                             sum = sum.wrapping_add(i);
-    //                         }
-    //                         let _ = sum;
-    //                     }));
-    //                 }
+                        prev_job = Some(builder.spawn(|| {
+                            let mut sum = 0u64;
+                            for i in 0..20 {
+                                sum = sum.wrapping_add(i);
+                            }
+                            let _ = sum;
+                        }));
+                    }
 
-    //                 scheduler.wait_for_all();
-    //             });
-    //         },
-    //     );
-    // }
-    // group.finish();
+                    scheduler.wait_for_all();
+                });
+            },
+        );
+    }
+    group.finish();
 
-    // // Benchmark 4: Parallel chains (multiple independent chains)
-    // let mut group = c.benchmark_group("parallel_chains");
-    // for num_chains in [4, 8, 16] {
-    //     group.bench_with_input(
-    //         BenchmarkId::from_parameter(num_chains),
-    //         &num_chains,
-    //         |b, &chains| {
-    //             let scheduler = Scheduler::with_workers(cpus);
-    //             b.iter(|| {
-    //                 for _ in 0..chains {
-    //                     let mut prev = None;
-    //                     for _ in 0..20 {
-    //                         let builder =
-    //                             JobSpec::builder("parallel_chain").priority(Priority::Medium);
+    // Benchmark 4: Parallel chains (multiple independent chains)
+    let mut group = c.benchmark_group("parallel_chains");
+    for num_chains in [4, 8, 16] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(num_chains),
+            &num_chains,
+            |b, &chains| {
+                let scheduler = Scheduler::with_workers(cpus);
+                b.iter(|| {
+                    for _ in 0..chains {
+                        let mut prev = None;
+                        for _ in 0..20 {
+                            let builder = scheduler
+                                .job_builder("parallel_chain")
+                                .priority(Priority::Medium);
 
-    //                         let builder = if let Some(dep) = prev {
-    //                             builder.dependencies(vec![dep])
-    //                         } else {
-    //                             builder.dependencies(vec![])
-    //                         };
+                            let builder = if let Some(dep) = prev {
+                                builder.dependencies(vec![dep])
+                            } else {
+                                builder.dependencies(vec![])
+                            };
 
-    //                         prev = Some(builder.schedule(&scheduler, || {
-    //                             let mut sum = 0u64;
-    //                             for i in 0..15 {
-    //                                 sum = sum.wrapping_add(i);
-    //                             }
-    //                             let _ = sum;
-    //                         }));
-    //                     }
-    //                 }
+                            prev = Some(builder.spawn(|| {
+                                let mut sum = 0u64;
+                                for i in 0..15 {
+                                    sum = sum.wrapping_add(i);
+                                }
+                                let _ = sum;
+                            }));
+                        }
+                    }
 
-    //                 scheduler.wait_for_all();
-    //             });
-    //         },
-    //     );
-    // }
-    // group.finish();
+                    scheduler.wait_for_all();
+                });
+            },
+        );
+    }
+    group.finish();
 
     // Benchmark 5: Bursty workload (submit jobs in waves)
     let mut group = c.benchmark_group("bursty_workload");

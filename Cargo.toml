@@ -11,14 +11,13 @@ keywords = ["fibers", "concurrency", "threading"]
 
 [dependencies]
 bon = "3.8.1"
-parking_lot = "0.12.5"
-smallvec = "1.15.1"
-log = "0.4.28"
-profiling = { version = "1.0.17" }
-num_cpus = "1.17.0"
 crossbeam-deque = "0.8.6"
-slotmap = "1.1.1"
 gdt-cpus = "25.12.0"
+log = "0.4.28"
+num_cpus = "1.17.0"
+parking_lot = "0.12.5"
+profiling = { version = "1.0.17" }
+smallvec = "1.15.1"
 
 [dev-dependencies]
 criterion = "0.8"

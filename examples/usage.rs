@@ -41,8 +41,7 @@ fn main() {
             println!("All small jobs completed. Running sync job.");
         });
 
-    // TODO(cohae): Fix this
-    // scheduler.wait_for(job_sync);
+    job_sync.wait();
     println!("Small job sync completed. Big job should finish shortly.");
     scheduler.wait_for_all();
     println!("All jobs completed.");

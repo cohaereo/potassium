@@ -1,18 +1,9 @@
 use std::sync::Arc;
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SharedString {
     Static(&'static str),
     Owned(Arc<String>),
-}
-
-impl SharedString {
-    pub fn handle(&self) -> SharedString {
-        match self {
-            SharedString::Static(s) => SharedString::Static(s),
-            SharedString::Owned(s) => SharedString::Owned(Arc::clone(s)),
-        }
-    }
 }
 
 impl From<&'static str> for SharedString {

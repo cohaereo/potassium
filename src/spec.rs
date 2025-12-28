@@ -1,4 +1,4 @@
-use crate::JobId;
+use crate::job::JobHandle;
 use crate::scheduler::Scheduler;
 use crate::spec::job_spec_builder::{IsComplete, State};
 use crate::util::SharedString;
@@ -14,11 +14,11 @@ pub struct JobSpec<'a> {
     pub priority: Priority,
 
     #[builder(default, into)]
-    pub dependencies: SmallVec<[JobId; 4]>,
+    pub dependencies: SmallVec<[JobHandle; 2]>,
 }
 
 impl<'a, S: State> JobSpecBuilder<'a, S> {
-    pub fn spawn<F>(self, body: F) -> JobId
+    pub fn spawn<F>(self, body: F) -> JobHandle
     where
         S: IsComplete,
         F: FnOnce() + Send + 'static,
