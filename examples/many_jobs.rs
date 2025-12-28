@@ -10,23 +10,21 @@ fn main() {
         .map(|n| n.get())
         .unwrap_or(4);
 
-    let worker_count = [6];
-    // let mut worker_count = vec![1, 2, cpus, cpus * 2];
-    // if !worker_count.contains(&(cpus / 2)) && cpus > 2 {
-    //     worker_count.push(cpus / 2);
-    //     worker_count.sort_unstable();
-    // }
+    let mut worker_count = vec![1, 2, cpus, cpus * 2];
+    if !worker_count.contains(&(cpus / 2)) && cpus > 2 {
+        worker_count.push(cpus / 2);
+        worker_count.sort_unstable();
+    }
 
     for &worker_count in &worker_count {
         let scheduler = Scheduler::with_workers(worker_count);
         for (kind_name, num_operations) in [
             // ("tiny_jobs", 1_000),
-            // ("small_job", 10_000),
+            ("small_job", 10_000),
             ("job", 1_000_000),
-            // ("big_job", 10_000_000),
+            ("big_job", 10_000_000),
         ] {
-            // for job_count in [100, 1_000] {
-            for job_count in [1_000] {
+            for job_count in [100, 1_000] {
                 let baseline_start = std::time::Instant::now();
                 let baseline_counter = Arc::new(AtomicUsize::new(0));
                 for _ in 0..job_count {

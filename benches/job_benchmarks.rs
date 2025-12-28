@@ -45,7 +45,7 @@ fn scheduler_benchmark(c: &mut Criterion) {
                 group.bench_with_input(
                     BenchmarkId::from_parameter(format!("w{:02}", worker_count)),
                     &(worker_count, job_count),
-                    |b, &(workers, jobs)| {
+                    |b, &(_workers, jobs)| {
                         b.iter(|| {
                             let counter = Arc::new(AtomicUsize::new(0));
 
@@ -74,13 +74,13 @@ fn scheduler_benchmark(c: &mut Criterion) {
     }
 
     // Benchmark 2: Priority scheduling stress test
+    let scheduler = Scheduler::with_workers(cpus);
     let mut group = c.benchmark_group("priority_scheduling");
     for job_count in [500, 2_000, 5_000] {
         group.bench_with_input(
             BenchmarkId::from_parameter(job_count),
             &job_count,
             |b, &jobs| {
-                let scheduler = Scheduler::with_workers(cpus);
                 b.iter(|| {
                     // Mix of priorities
                     for i in 0..jobs {
@@ -115,12 +115,11 @@ fn scheduler_benchmark(c: &mut Criterion) {
             BenchmarkId::from_parameter(chain_length),
             &chain_length,
             |b, &length| {
-                let scheduler = Scheduler::with_workers(cpus);
                 b.iter(|| {
                     let mut prev_job = None;
-                    for _ in 0..length {
+                    for e in 0..length {
                         let builder = scheduler
-                            .job_builder("chain_job")
+                            .job_builder(format!("chain_job_{e}"))
                             .priority(Priority::Medium);
 
                         let builder = if let Some(dep) = prev_job {
@@ -129,7 +128,7 @@ fn scheduler_benchmark(c: &mut Criterion) {
                             builder.dependencies(vec![])
                         };
 
-                        prev_job = Some(builder.spawn(|| {
+                        prev_job = Some(builder.spawn(move || {
                             let mut sum = 0u64;
                             for i in 0..20 {
                                 sum = sum.wrapping_add(i);
@@ -152,7 +151,6 @@ fn scheduler_benchmark(c: &mut Criterion) {
             BenchmarkId::from_parameter(num_chains),
             &num_chains,
             |b, &chains| {
-                let scheduler = Scheduler::with_workers(cpus);
                 b.iter(|| {
                     for _ in 0..chains {
                         let mut prev = None;
@@ -191,7 +189,6 @@ fn scheduler_benchmark(c: &mut Criterion) {
             BenchmarkId::from_parameter(wave_count),
             &wave_count,
             |b, &waves| {
-                let scheduler = Scheduler::with_workers(cpus);
                 b.iter(|| {
                     for _ in 0..waves {
                         for _ in 0..100 {
@@ -219,7 +216,6 @@ fn scheduler_benchmark(c: &mut Criterion) {
 
     // Benchmark 6: Mixed workload (different job sizes)
     c.bench_function("mixed_workload", |b| {
-        let scheduler = Scheduler::with_workers(cpus);
         b.iter(|| {
             // 80% small jobs, 15% medium, 5% large
             for i in 0..1000 {

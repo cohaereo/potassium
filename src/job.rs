@@ -27,35 +27,40 @@ pub(crate) struct JobHandleInner {
 unsafe impl Sync for JobHandleInner {}
 
 impl JobHandle {
-    pub fn new<F>(spec: crate::spec::JobSpec, body: F) -> Self
+    pub(crate) fn new<F>(spec: crate::spec::JobSpec, body: F) -> (Self, bool)
     where
         F: FnOnce() + Send + 'static,
     {
-        let num_dependencies_complete = spec
-            .dependencies
-            .iter()
-            .map(|j| j.is_completed() as u32)
-            .sum::<u32>();
-
         let j = JobHandle {
             inner: Arc::new(JobHandleInner {
                 name: spec.name,
                 completed: AtomicBool::new(false),
                 body: UnsafeCell::new(Some(Box::new(body))),
                 priority: spec.priority,
-                remaining_dependencies: AtomicU32::new(
-                    spec.dependencies.len() as u32 - num_dependencies_complete,
-                ),
+                remaining_dependencies: AtomicU32::new(spec.dependencies.len() as u32),
                 dependencies: spec.dependencies,
                 dependents: RwLock::new(SmallVec::new()),
             }),
         };
 
-        for dep in &j.inner.dependencies {
-            dep.push_dependent(j.clone());
+        let mut push_to_global_queue = true;
+        {
+            for dependency in &j.inner.dependencies {
+                // Add this job as a dependent to each dependency, subtracting from the dependency counter if the dependency is already completed
+                // We keep the write lock during this check, so that we don't miss a completion that happens after pushing but before checking is_completed
+                let mut dependents = dependency.inner.dependents.write();
+                if dependency.is_completed() {
+                    j.inner
+                        .remaining_dependencies
+                        .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+                } else {
+                    push_to_global_queue = false;
+                    dependents.push(j.clone());
+                }
+            }
         }
 
-        j
+        (j, push_to_global_queue)
     }
 
     pub fn name(&self) -> &str {
@@ -72,13 +77,14 @@ impl JobHandle {
         &self.inner.dependencies
     }
 
-    pub fn priority(&self) -> Priority {
-        self.inner.priority
+    pub fn remaining_dependencies(&self) -> u32 {
+        self.inner
+            .remaining_dependencies
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
-    fn push_dependent(&self, dependent: JobHandle) {
-        let mut dependents = self.inner.dependents.write();
-        dependents.push(dependent);
+    pub fn priority(&self) -> Priority {
+        self.inner.priority
     }
 
     pub(crate) fn set_completed(&self) {

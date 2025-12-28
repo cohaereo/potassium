@@ -93,11 +93,11 @@ impl Scheduler {
     where
         F: FnOnce() + Send + 'static,
     {
-        let handle = JobHandle::new(spec.into(), body);
+        let (handle, push_to_global_queue) = JobHandle::new(spec.into(), body);
 
-        // If the job has no dependencies, push it to the global injector
+        // If the job has no (pending) dependencies, push it to the global injector
         // Otherwise, it will be scheduled into the local queue of the worker that completes its last dependency
-        if handle.dependencies().is_empty() {
+        if push_to_global_queue {
             self.inner.injectors.push(handle.clone());
         }
         self.inner
@@ -375,9 +375,8 @@ fn worker_thread(ctx: WorkerContext) {
                 (job_body)();
 
                 job.set_completed();
+                notify_dependents(&ctx, &job);
             }
-
-            notify_dependents(&ctx, &job);
 
             // Decrement the queued job count
             ctx.scheduler
