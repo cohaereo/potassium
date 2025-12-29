@@ -68,11 +68,13 @@ impl Scheduler {
                     if let Err(e) = gdt_cpus::pin_thread_to_core(i) {
                         log::error!("Failed to pin thread to core {}: {}", i, e);
                     }
-                    if let Err(e) =
+                    if let Err(_e) =
                         gdt_cpus::set_thread_priority(gdt_cpus::ThreadPriority::AboveNormal)
                     {
-                        log::error!("Failed to set thread priority: {}", e);
+                        // cohae: gdt_cpus apparently already logs this, whyyy
+                        // log::error!("Failed to set thread priority: {}", e);
                     }
+
                     worker_thread(WorkerContext { scheduler, queues })
                 })
                 .expect("Failed to spawn scheduler thread");
