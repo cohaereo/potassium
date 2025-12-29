@@ -45,4 +45,5 @@ fn main() {
     println!("Small job sync completed. Big job should finish shortly.");
     scheduler.wait_for_all();
     println!("All jobs completed.");
+    scheduler.shutdown();
 }

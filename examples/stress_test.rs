@@ -57,4 +57,5 @@ fn run_stress_test(num_workers: usize, dependencies: bool) {
         duration,
         duration / num_jobs as u32
     );
+    scheduler.shutdown();
 }

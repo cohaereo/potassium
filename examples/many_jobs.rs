@@ -84,5 +84,7 @@ fn main() {
                 );
             }
         }
+
+        scheduler.shutdown();
     }
 }

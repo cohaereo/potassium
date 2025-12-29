@@ -168,10 +168,8 @@ impl Scheduler {
 
         None
     }
-}
 
-impl Drop for Scheduler {
-    fn drop(&mut self) {
+    pub fn shutdown(&self) {
         self.inner
             .exiting
             .store(true, std::sync::atomic::Ordering::Release);
@@ -180,6 +178,17 @@ impl Drop for Scheduler {
         for handle in threads {
             let _ = handle.join();
         }
+    }
+
+    pub fn shutdown_graceful(&self) {
+        self.wait_for_all();
+        self.shutdown();
+    }
+}
+
+impl Drop for SchedulerState {
+    fn drop(&mut self) {
+        log::info!("Scheduler shut down.");
     }
 }
 
@@ -391,6 +400,13 @@ fn notify_dependents(ctx: &WorkerContext, job: &JobHandle) {
             .inner
             .remaining_dependencies
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+
+        // Sanity check. If the last value was 0, we counted a dependency too many somewhere
+        debug_assert!(
+            remaining > 0,
+            "Job {} has negative remaining dependencies",
+            dependent.name()
+        );
 
         if remaining == 1 {
             // All dependencies are complete, schedule the dependent job
