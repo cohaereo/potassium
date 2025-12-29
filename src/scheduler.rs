@@ -111,6 +111,12 @@ impl Scheduler {
         JobSpec::builder(self, name)
     }
 
+    pub fn num_jobs_queued(&self) -> usize {
+        self.inner
+            .num_jobs_queued
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     pub fn wait_for_all(&self) {
         while self
             .inner
