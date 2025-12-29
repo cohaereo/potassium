@@ -27,7 +27,7 @@ pub(crate) struct JobHandleInner {
 unsafe impl Sync for JobHandleInner {}
 
 impl JobHandle {
-    pub(crate) fn new<F>(spec: crate::spec::JobSpec, body: F) -> (Self, bool)
+    pub(crate) fn new<F>(spec: crate::spec::JobBuilder, body: F) -> (Self, bool)
     where
         F: FnOnce() + Send + 'static,
     {

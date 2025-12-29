@@ -1,9 +1,6 @@
 use crate::job::JobHandle;
 use crate::spec::Priority;
-use crate::{
-    spec::{JobSpec, JobSpecBuilder},
-    util::SharedString,
-};
+use crate::{spec::JobBuilder, util::SharedString};
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -89,7 +86,7 @@ impl Scheduler {
         self.inner.num_workers
     }
 
-    pub fn spawn<'a, F>(&'a self, spec: impl Into<JobSpec<'a>>, body: F) -> JobHandle
+    pub fn spawn<'a, F>(&'a self, spec: impl Into<JobBuilder<'a>>, body: F) -> JobHandle
     where
         F: FnOnce() + Send + 'static,
     {
@@ -107,8 +104,8 @@ impl Scheduler {
         handle
     }
 
-    pub fn job_builder(&'_ self, name: impl Into<SharedString>) -> JobSpecBuilder<'_> {
-        JobSpec::builder(self, name)
+    pub fn job_builder(&'_ self, name: impl Into<SharedString>) -> JobBuilder<'_> {
+        JobBuilder::builder(self, name)
     }
 
     pub fn num_jobs_queued(&self) -> usize {
