@@ -1,6 +1,7 @@
 use std::cell::UnsafeCell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -19,7 +20,7 @@ pub(crate) struct JobHandleInner {
     body: UnsafeCell<Option<Box<dyn FnOnce() + Send + 'static>>>,
     pub(crate) priority: Priority,
 
-    dependencies: SmallVec<[JobHandle; 2]>,
+    dependencies: SmallVec<[JobHandleWeak; 2]>,
     pub(crate) dependents: RwLock<SmallVec<[JobHandle; 2]>>,
     pub(crate) remaining_dependencies: AtomicU32,
 }
@@ -38,14 +39,14 @@ impl JobHandle {
                 body: UnsafeCell::new(Some(Box::new(body))),
                 priority: spec.priority,
                 remaining_dependencies: AtomicU32::new(spec.dependencies.len() as u32),
-                dependencies: spec.dependencies,
+                dependencies: spec.dependencies.iter().map(|d| d.downgrade()).collect(),
                 dependents: RwLock::new(SmallVec::new()),
             }),
         };
 
         let mut push_to_global_queue = true;
         {
-            for dependency in &j.inner.dependencies {
+            for dependency in &spec.dependencies {
                 // Add this job as a dependent to each dependency, subtracting from the dependency counter if the dependency is already completed
                 // We keep the write lock during this check, so that we don't miss a completion that happens after pushing but before checking is_completed
                 let mut dependents = dependency.inner.dependents.write();
@@ -73,7 +74,7 @@ impl JobHandle {
             .load(std::sync::atomic::Ordering::Acquire)
     }
 
-    pub fn dependencies(&self) -> &[JobHandle] {
+    pub fn dependencies(&self) -> &[JobHandleWeak] {
         &self.inner.dependencies
     }
 
@@ -97,9 +98,49 @@ impl JobHandle {
         unsafe { (*self.inner.body.get()).take() }
     }
 
+    #[profiling::function]
     pub fn wait(&self) {
         while !self.is_completed() {
             std::thread::yield_now();
         }
     }
+
+    /// Waits for the job to complete, returning a WaitResult indicating whether it completed or timed out
+    pub fn wait_timeout(&self, timeout: Duration) -> WaitResult {
+        profiling::scope!(
+            "JobHandle::wait_timeout",
+            &format!("name={}, timeout={:?}", self.name(), timeout)
+        );
+        let start = std::time::Instant::now();
+        while !self.is_completed() {
+            if start.elapsed() >= timeout {
+                return WaitResult::Timeout;
+            }
+            std::thread::yield_now();
+        }
+        WaitResult::Completed
+    }
+
+    pub fn downgrade(&self) -> JobHandleWeak {
+        JobHandleWeak {
+            inner: Arc::downgrade(&self.inner),
+        }
+    }
+}
+
+impl JobHandleWeak {
+    pub fn upgrade(&self) -> Option<JobHandle> {
+        self.inner.upgrade().map(|inner| JobHandle { inner })
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum WaitResult {
+    Completed,
+    Timeout,
+}
+
+#[derive(Clone)]
+pub struct JobHandleWeak {
+    pub(crate) inner: Weak<JobHandleInner>,
 }
