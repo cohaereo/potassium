@@ -134,7 +134,6 @@ impl Scheduler {
             .store(false, std::sync::atomic::Ordering::Release);
     }
 
-    #[profiling::function]
     fn try_steal_job(&self, work_queues: &WorkQueues) -> Option<JobHandle> {
         for stealer in &self.inner.stealers {
             if stealer.owner == work_queues.owner {
@@ -219,7 +218,6 @@ impl Injectors {
         }
     }
 
-    #[profiling::function]
     fn steal_batch_and_pop(&self, work_queues: &WorkQueues) -> Option<JobHandle> {
         for priority in Priority::ALL {
             let injector = match priority {
@@ -296,7 +294,6 @@ struct WorkerContext {
 }
 
 impl WorkerContext {
-    #[profiling::function]
     fn fetch_job(&self) -> Option<JobHandle> {
         // Check local queues first
         for priority in Priority::ALL {
@@ -345,10 +342,8 @@ impl WorkerContext {
     }
 }
 
-#[profiling::function]
 fn worker_thread(ctx: WorkerContext) {
     loop {
-        profiling::scope!("worker_loop");
         if ctx.is_exiting() {
             break;
         }
@@ -360,23 +355,23 @@ fn worker_thread(ctx: WorkerContext) {
             .load(std::sync::atomic::Ordering::Acquire);
 
         if num_jobs_queued == 0 || ctx.is_paused() {
-            profiling::scope!("paused");
             std::thread::yield_now();
             continue;
         }
 
         if let Some(job) = ctx.fetch_job() {
-            {
-                profiling::scope!("execute_job", job.name());
-                // Execute the job
-                let Some(job_body) = (unsafe { job.take_body() }) else {
-                    panic!("Job body already taken for job {}", job.name());
-                };
-                (job_body)();
+            // Execute the job
+            let Some(job_body) = (unsafe { job.take_body() }) else {
+                panic!("Job body already taken for job {}", job.name());
+            };
 
-                job.set_completed();
-                notify_dependents(&ctx, &job);
+            {
+                profiling::scope!(job.name());
+                (job_body)();
             }
+
+            job.set_completed();
+            notify_dependents(&ctx, &job);
 
             // Decrement the queued job count
             ctx.scheduler
@@ -387,7 +382,6 @@ fn worker_thread(ctx: WorkerContext) {
     }
 }
 
-#[profiling::function]
 fn notify_dependents(ctx: &WorkerContext, job: &JobHandle) {
     for dependent in job.inner.dependents.read().iter() {
         let remaining = dependent
