@@ -411,6 +411,16 @@ fn notify_dependents(ctx: &WorkerContext, job: &JobHandle) {
         );
 
         if remaining == 1 {
+            let is_already_enqueued = dependent
+                .inner
+                .enqueued
+                .swap(true, std::sync::atomic::Ordering::AcqRel);
+            if is_already_enqueued {
+                // Already enqueued. This happens if dependencies complete while the job is initially checking its dependencies)
+                // In this case, it's already been pushed into the global queue
+                continue;
+            }
+
             // All dependencies are complete, schedule the dependent job
             ctx.push_job(dependent.clone());
         }

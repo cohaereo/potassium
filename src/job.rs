@@ -23,6 +23,7 @@ pub(crate) struct JobHandleInner {
     dependencies: SmallVec<[JobHandleWeak; 2]>,
     pub(crate) dependents: RwLock<SmallVec<[JobHandle; 2]>>,
     pub(crate) remaining_dependencies: AtomicU32,
+    pub(crate) enqueued: AtomicBool,
 }
 
 unsafe impl Sync for JobHandleInner {}
@@ -41,6 +42,7 @@ impl JobHandle {
                 remaining_dependencies: AtomicU32::new(spec.dependencies.len() as u32),
                 dependencies: spec.dependencies.iter().map(|d| d.downgrade()).collect(),
                 dependents: RwLock::new(SmallVec::new()),
+                enqueued: AtomicBool::new(false),
             }),
         };
 
@@ -59,6 +61,23 @@ impl JobHandle {
                     dependents.push(j.clone());
                 }
             }
+        }
+
+        // If there are no remaining dependencies, we can push this job to the global queue
+        if j.inner
+            .remaining_dependencies
+            .load(std::sync::atomic::Ordering::Acquire)
+            == 0
+        {
+            push_to_global_queue = true;
+        }
+
+        if push_to_global_queue {
+            // Set enqueued to true, and if it was previously false, we can push to the global queue
+            push_to_global_queue = !j
+                .inner
+                .enqueued
+                .swap(true, std::sync::atomic::Ordering::AcqRel);
         }
 
         (j, push_to_global_queue)
