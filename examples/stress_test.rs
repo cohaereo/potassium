@@ -1,32 +1,31 @@
 //! This example schedules as many empty jobs as possible within one second to measure the overhead of job scheduling.
 
-use potassium::{Priority, Scheduler};
+use potassium::{Priority, Scheduler, SchedulerConfiguration};
 
 fn main() {
-    let cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-
-    let mut worker_counts = vec![1, 2, cpus, cpus * 2];
-    if !worker_counts.contains(&(cpus / 2)) && cpus > 2 {
-        worker_counts.push(cpus / 2);
-        worker_counts.sort_unstable();
-    }
+    #[rustfmt::skip]
+    let configurations = [
+        (SchedulerConfiguration::single_core(), "single core"),
+        (SchedulerConfiguration::with_cores_autopin(2), "2 cores pinned"),
+        (SchedulerConfiguration::all_cores_unpinned(), "all cores unpinned"),
+        (SchedulerConfiguration::all_cores_pinned(), "all cores pinned"),
+        (SchedulerConfiguration::all_logical_cores_pinned(), "all logical cores pinned"),
+    ];
 
     for with_dependencies in [false, true] {
-        for &num_workers in &worker_counts {
+        for (config, config_name) in &configurations {
             println!(
-                "Running stress test with {} workers (dependencies={with_dependencies}):",
-                num_workers
+                "Running stress test with config '{config_name} ({})' (dependencies={with_dependencies}):",
+                config.workers.len()
             );
-            run_stress_test(num_workers, with_dependencies);
+            run_stress_test(config, with_dependencies);
             println!();
         }
     }
 }
 
-fn run_stress_test(num_workers: usize, dependencies: bool) {
-    let scheduler = Scheduler::with_workers(num_workers);
+fn run_stress_test(config: &SchedulerConfiguration, dependencies: bool) {
+    let scheduler = Scheduler::new(config);
     scheduler.pause();
 
     let start = std::time::Instant::now();

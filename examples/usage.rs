@@ -1,7 +1,7 @@
 use potassium::{Priority, Scheduler};
 
 fn main() {
-    let scheduler = Scheduler::new();
+    let scheduler = Scheduler::default();
     println!("Running with {} workers", scheduler.num_workers());
 
     let _big_job = scheduler

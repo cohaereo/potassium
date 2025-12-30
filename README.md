@@ -8,7 +8,7 @@ It is designed so that the entire engine can be built around it in order to maxi
 
 - ✅ Job dependencies
 - ✅ Priority scheduling
-- 🕑 Configurable worker threads - coming soon
+- ✅ Configurable worker threads
 - 🕑 Job graphs (DAGs) - coming soon
 - 🕑 [Fiber](https://crates.io/crates/fibrous) support (resumable jobs) - coming soon
 
@@ -16,7 +16,7 @@ It is designed so that the entire engine can be built around it in order to maxi
 
 ```rust
 use potassium::{Scheduler, Priority};
-let scheduler = Scheduler::new();
+let scheduler = Scheduler::default();
 println!("Running with {} workers", scheduler.num_workers());
 
 let _long_job = scheduler

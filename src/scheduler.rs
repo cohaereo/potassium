@@ -1,3 +1,4 @@
+use crate::SchedulerConfiguration;
 use crate::job::JobHandle;
 use crate::worker::{Injectors, WorkQueues, WorkStealers, WorkerContext, WorkerId, worker_thread};
 use crate::{builder::JobBuilder, util::SharedString};
@@ -35,28 +36,15 @@ impl Scheduler {
     /// ```
     /// use potassium::Scheduler;
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// assert_eq!(scheduler.num_workers(), gdt_cpus::num_physical_cores().unwrap_or(4));
     /// ```
     #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        Self::with_workers(gdt_cpus::num_physical_cores().unwrap_or(4))
-    }
-
-    /// Creates a new scheduler with the specified number of worker threads.
-    ///
-    /// In most cases, [`Scheduler::new`] is preferred, as it automatically configures the worker threads in the most optimal way for the current system.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use potassium::Scheduler;
-    ///
-    /// let scheduler = Scheduler::with_workers(8);
-    /// assert_eq!(scheduler.num_workers(), 8);
-    /// ```
-    pub fn with_workers(num_workers: usize) -> Self {
-        let (mut workers, stealers): (Vec<_>, Vec<_>) = (0..num_workers)
+    pub fn new(config: &SchedulerConfiguration) -> Self {
+        let num_workers = config.workers.len();
+        let (mut workers, stealers): (Vec<_>, Vec<_>) = config
+            .workers
+            .iter()
             .map(|_| {
                 let worker_id = WorkerId::new();
                 let (workers, stealers) = WorkQueues::new(worker_id);
@@ -79,7 +67,7 @@ impl Scheduler {
             inner: Arc::clone(&state),
         };
 
-        for i in 0..num_workers {
+        for (i, worker_config) in config.workers.iter().cloned().enumerate() {
             let scheduler = scheduler.clone();
             let queues = workers
                 .pop()
@@ -87,12 +75,12 @@ impl Scheduler {
             let handle = std::thread::Builder::new()
                 .name(format!("job-executor-{i}"))
                 .spawn(move || {
-                    if let Err(e) = gdt_cpus::pin_thread_to_core(i) {
+                    if let Err(e) = gdt_cpus::set_thread_affinity(
+                        &gdt_cpus::AffinityMask::from_cores(&worker_config.affinity),
+                    ) {
                         log::error!("Failed to pin thread to core {}: {}", i, e);
                     }
-                    if let Err(_e) =
-                        gdt_cpus::set_thread_priority(gdt_cpus::ThreadPriority::AboveNormal)
-                    {
+                    if let Err(_e) = gdt_cpus::set_thread_priority(worker_config.priority.into()) {
                         // cohae: gdt_cpus apparently already logs this, whyyy
                         // log::error!("Failed to set thread priority: {}", e);
                     }
@@ -104,6 +92,25 @@ impl Scheduler {
         }
 
         scheduler
+    }
+
+    /// Creates a new scheduler with the specified number of worker threads.
+    ///
+    /// In most cases, [`Scheduler::default`] is preferred, as it automatically configures the worker threads in the most optimal way for the current system.
+    ///
+    /// This function uses [`SchedulerConfiguration::with_cores_autopin`] to create the worker threads. If you need more control over the worker thread configuration, consider using [`Scheduler::new`] with a custom [`SchedulerConfiguration`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::with_workers(8);
+    /// assert_eq!(scheduler.num_workers(), 8);
+    /// ```
+    pub fn with_workers(num_workers: usize) -> Self {
+        let config = SchedulerConfiguration::with_cores_autopin(num_workers);
+        Scheduler::new(&config)
     }
 
     /// Returns the number of worker threads in the scheduler.
@@ -122,7 +129,7 @@ impl Scheduler {
     /// ```
     /// use potassium::Scheduler;
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// let spec = scheduler.job_builder("example_job");
     /// let job_handle = scheduler.spawn(spec, || {
     ///     println!("Hello from the job!");
@@ -155,7 +162,7 @@ impl Scheduler {
     /// ```
     /// use potassium::Scheduler;
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// let job_handle = scheduler.job_builder("example_job")
     ///     .spawn(|| {
     ///         println!("Hello from the job!");
@@ -172,7 +179,7 @@ impl Scheduler {
     /// ```
     /// use potassium::Scheduler;
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// assert_eq!(scheduler.num_jobs_queued(), 0);
     ///
     /// scheduler.pause();
@@ -196,7 +203,7 @@ impl Scheduler {
     /// ```
     /// use potassium::Scheduler;
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// scheduler.job_builder("example_job")
     ///     .spawn(|| {
     ///         println!("Hello from the job!");
@@ -224,7 +231,7 @@ impl Scheduler {
     /// ```
     /// use potassium::Scheduler;
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// scheduler.pause();
     /// // Jobs scheduled while paused will not execute until `resume` is called
     /// scheduler.job_builder("example_job")
@@ -291,6 +298,12 @@ impl Scheduler {
 
             worker_threads[idx].thread().unpark();
         }
+    }
+}
+
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new(&SchedulerConfiguration::default())
     }
 }
 

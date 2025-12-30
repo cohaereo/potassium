@@ -24,7 +24,7 @@ impl<'a> JobBuilder<'a> {
     /// ```
     /// use potassium::{Scheduler, Priority};
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// let job_builder = scheduler.job_builder("example_job");
     ///
     /// assert_eq!(&*job_builder.name, "example_job");
@@ -47,7 +47,7 @@ impl<'a> JobBuilder<'a> {
     /// ```
     /// use potassium::{Scheduler, Priority};
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// let job_builder = scheduler
     ///     .job_builder("example_job")
     ///     .priority(Priority::High);
@@ -66,7 +66,7 @@ impl<'a> JobBuilder<'a> {
     /// ```
     /// use potassium::{Scheduler, Priority};
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// let dep_job = scheduler
     ///     .job_builder("dependency_job")
     ///     .spawn(|| {});
@@ -92,7 +92,7 @@ impl<'a> JobBuilder<'a> {
     /// ```
     /// use potassium::Scheduler;
     ///
-    /// let scheduler = Scheduler::new();
+    /// let scheduler = Scheduler::default();
     /// let job_handle = scheduler
     ///     .job_builder("example_job")
     ///     .spawn(|| {
