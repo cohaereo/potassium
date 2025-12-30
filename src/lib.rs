@@ -1,10 +1,12 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs, clippy::missing_safety_doc)]
 
-pub mod job;
-pub mod scheduler;
-pub mod spec;
-pub mod util;
+mod builder;
+mod job;
+mod scheduler;
+mod util;
 
-pub use job::JobHandle;
+pub use builder::{JobBuilder, Priority};
+pub use job::{JobHandle, JobHandleWeak};
 pub use scheduler::Scheduler;
-pub use spec::{JobBuilder, Priority};
+pub use util::SharedString;

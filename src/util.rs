@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
+/// A string that can be either a static string slice or an owned string wrapped in an Arc.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SharedString {
+    /// A static string slice.
     Static(&'static str),
+    /// An owned string wrapped in an Arc, allowing for cheap cloning.
     Owned(Arc<String>),
 }
 

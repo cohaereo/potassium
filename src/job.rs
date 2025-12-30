@@ -6,9 +6,10 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 
-use crate::spec::Priority;
+use crate::builder::Priority;
 use crate::util::SharedString;
 
+/// A shared handle to a scheduled job.
 #[derive(Clone)]
 pub struct JobHandle {
     pub(crate) inner: Arc<JobHandleInner>,
@@ -29,7 +30,7 @@ pub(crate) struct JobHandleInner {
 unsafe impl Sync for JobHandleInner {}
 
 impl JobHandle {
-    pub(crate) fn new<F>(spec: crate::spec::JobBuilder, body: F) -> (Self, bool)
+    pub(crate) fn new<F>(spec: crate::builder::JobBuilder, body: F) -> (Self, bool)
     where
         F: FnOnce() + Send + 'static,
     {
@@ -83,26 +84,33 @@ impl JobHandle {
         (j, push_to_global_queue)
     }
 
+    /// Returns the name of the job.
     pub fn name(&self) -> &str {
         &self.inner.name
     }
 
+    /// Returns whether the job has completed.
     pub fn is_completed(&self) -> bool {
         self.inner
             .completed
             .load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// Returns the dependencies of the job.
+    ///
+    /// Note that these are weak references in order to avoid cyclic references internally.
     pub fn dependencies(&self) -> &[JobHandleWeak] {
         &self.inner.dependencies
     }
 
+    /// Returns the number of dependencies that have not yet completed.
     pub fn remaining_dependencies(&self) -> u32 {
         self.inner
             .remaining_dependencies
             .load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// Returns the priority of the job.
     pub fn priority(&self) -> Priority {
         self.inner.priority
     }
@@ -117,8 +125,13 @@ impl JobHandle {
         unsafe { (*self.inner.body.get()).take() }
     }
 
-    #[profiling::function]
+    /// Waits for the job to complete.
+    ///
+    /// This function will block the current thread until the job is completed.
+    ///
+    /// If you need to poll a long running job, consider using `is_complete` or `wait_timeout` instead.
     pub fn wait(&self) {
+        profiling::scope!("JobHandle::wait", &format!("name={}", self.name()));
         while !self.is_completed() {
             std::thread::yield_now();
         }
@@ -140,6 +153,7 @@ impl JobHandle {
         WaitResult::Completed
     }
 
+    /// Downgrades the JobHandle to a weak reference.
     pub fn downgrade(&self) -> JobHandleWeak {
         JobHandleWeak {
             inner: Arc::downgrade(&self.inner),
@@ -148,6 +162,9 @@ impl JobHandle {
 }
 
 impl JobHandleWeak {
+    /// Upgrades the weak reference to a strong reference, if the job is still alive.
+    ///
+    /// Returns `None` if all strong references have already been dropped.
     pub fn upgrade(&self) -> Option<JobHandle> {
         self.inner.upgrade().map(|inner| JobHandle { inner })
     }
@@ -159,6 +176,7 @@ pub enum WaitResult {
     Timeout,
 }
 
+/// A weak reference to a scheduled job.
 #[derive(Clone)]
 pub struct JobHandleWeak {
     pub(crate) inner: Weak<JobHandleInner>,

@@ -1,6 +1,6 @@
+use crate::builder::Priority;
 use crate::job::JobHandle;
-use crate::spec::Priority;
-use crate::{spec::JobBuilder, util::SharedString};
+use crate::{builder::JobBuilder, util::SharedString};
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -25,17 +25,40 @@ struct SchedulerState {
     exiting: AtomicBool,
 }
 
+/// Manages worker threads and job execution.
 #[derive(Clone)]
 pub struct Scheduler {
     inner: Arc<SchedulerState>,
 }
 
 impl Scheduler {
+    /// Creates a new scheduler with a number of worker threads equal to the number of physical CPU cores (or 4 if CPU topology cannot be determined).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::new();
+    /// assert_eq!(scheduler.num_workers(), gdt_cpus::num_physical_cores().unwrap_or(4));
+    /// ```
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self::with_workers(gdt_cpus::num_physical_cores().unwrap_or(4))
     }
 
+    /// Creates a new scheduler with the specified number of worker threads.
+    ///
+    /// In most cases, [`Scheduler::new`] is preferred, as it automatically configures the worker threads in the most optimal way for the current system.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::with_workers(8);
+    /// assert_eq!(scheduler.num_workers(), 8);
+    /// ```
     pub fn with_workers(num_workers: usize) -> Self {
         let (mut workers, stealers): (Vec<_>, Vec<_>) = (0..num_workers)
             .map(|_| {
@@ -87,10 +110,28 @@ impl Scheduler {
         scheduler
     }
 
+    /// Returns the number of worker threads in the scheduler.
+    ///
+    /// The number of workers is fixed at scheduler creation, and cannot be changed.
     pub fn num_workers(&self) -> usize {
         self.inner.num_workers
     }
 
+    /// Spawns a new job with the given specification and body.
+    ///
+    /// **Note:** It is recommended to use [`JobBuilder::spawn`] instead, as it provides a more ergonomic API.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::new();
+    /// let spec = scheduler.job_builder("example_job");
+    /// let job_handle = scheduler.spawn(spec, || {
+    ///     println!("Hello from the job!");
+    /// });
+    /// ```
     pub fn spawn<'a, F>(&'a self, spec: impl Into<JobBuilder<'a>>, body: F) -> JobHandle
     where
         F: FnOnce() + Send + 'static,
@@ -111,16 +152,63 @@ impl Scheduler {
         handle
     }
 
+    /// Creates a new JobBuilder
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::new();
+    /// let job_handle = scheduler.job_builder("example_job")
+    ///     .spawn(|| {
+    ///         println!("Hello from the job!");
+    ///     });
+    /// ```
     pub fn job_builder(&'_ self, name: impl Into<SharedString>) -> JobBuilder<'_> {
         JobBuilder::builder(self, name)
     }
 
+    /// Returns the number of jobs currently queued or running.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::new();
+    /// assert_eq!(scheduler.num_jobs_queued(), 0);
+    ///
+    /// scheduler.pause();
+    /// scheduler.job_builder("example_job")
+    ///     .spawn(|| {
+    ///         println!("Hello from the job!");
+    ///     });
+    ///
+    /// assert_eq!(scheduler.num_jobs_queued(), 1);
+    /// ```
     pub fn num_jobs_queued(&self) -> usize {
         self.inner
             .num_jobs_queued
             .load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// Blocks the current thread until all queued jobs have completed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::new();
+    /// scheduler.job_builder("example_job")
+    ///     .spawn(|| {
+    ///         println!("Hello from the job!");
+    ///     });
+    ///
+    /// scheduler.wait_for_all();
+    /// assert_eq!(scheduler.num_jobs_queued(), 0);
+    /// ```
     pub fn wait_for_all(&self) {
         while self
             .inner
@@ -132,18 +220,59 @@ impl Scheduler {
         }
     }
 
+    /// Pauses the scheduler, preventing worker threads from executing jobs. Call [`Scheduler::resume`] to continue processing jobs.
+    ///
+    /// Note that this will not stop currently executing jobs; it only prevents new jobs from starting until [`Scheduler::resume`] is called.
+    ///
+    /// # Examples
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::new();
+    /// scheduler.pause();
+    /// // Jobs scheduled while paused will not execute until `resume` is called
+    /// scheduler.job_builder("example_job")
+    ///     .spawn(|| {
+    ///         println!("This job will not run until the scheduler is resumed.");
+    ///     });
+    /// scheduler.resume();
+    /// ```
     pub fn pause(&self) {
         self.inner
             .paused
             .store(true, std::sync::atomic::Ordering::Release);
     }
 
+    /// Resumes the scheduler, allowing worker threads to execute jobs.
     pub fn resume(&self) {
         self.inner
             .paused
             .store(false, std::sync::atomic::Ordering::Release);
 
         self.wake_all_workers();
+    }
+
+    /// Shuts down the scheduler, terminating all worker threads.
+    ///
+    /// Note that this only waits for currently executing jobs to finish; any queued jobs that have not started will not be executed.
+    ///
+    /// Use [`Scheduler::shutdown_graceful`] to wait for all jobs to complete before shutting down.
+    pub fn shutdown(&self) {
+        self.inner
+            .exiting
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        self.wake_all_workers();
+        let threads = std::mem::take(&mut *self.inner.worker_threads.write());
+        for handle in threads {
+            let _ = handle.join();
+        }
+    }
+
+    /// Shuts down the scheduler gracefully, waiting for all queued and executing jobs to complete before terminating worker threads.
+    pub fn shutdown_graceful(&self) {
+        self.wait_for_all();
+        self.shutdown();
     }
 
     fn wake_all_workers(&self) {
@@ -196,23 +325,6 @@ impl Scheduler {
         }
 
         None
-    }
-
-    pub fn shutdown(&self) {
-        self.inner
-            .exiting
-            .store(true, std::sync::atomic::Ordering::Release);
-
-        self.wake_all_workers();
-        let threads = std::mem::take(&mut *self.inner.worker_threads.write());
-        for handle in threads {
-            let _ = handle.join();
-        }
-    }
-
-    pub fn shutdown_graceful(&self) {
-        self.wait_for_all();
-        self.shutdown();
     }
 }
 
@@ -478,8 +590,8 @@ fn notify_dependents(ctx: &WorkerContext, job: &JobHandle) {
 
 #[cfg(test)]
 mod tests {
+    use crate::builder::Priority;
     use crate::scheduler::Scheduler;
-    use crate::spec::Priority;
     use parking_lot::Mutex;
 
     #[test]

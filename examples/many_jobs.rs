@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use potassium::scheduler::Scheduler;
+use potassium::Scheduler;
 
 fn main() {
     let cpus = std::thread::available_parallelism()
@@ -54,7 +54,7 @@ fn main() {
 
                     scheduler
                         .job_builder(kind_name)
-                        .priority(potassium::spec::Priority::Medium)
+                        .priority(potassium::Priority::Medium)
                         .spawn(move || {
                             // Small amount of work
                             let mut sum = 0u64;

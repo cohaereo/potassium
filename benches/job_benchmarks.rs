@@ -1,6 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use potassium::scheduler::Scheduler;
-use potassium::spec::Priority;
+use potassium::{Priority, Scheduler};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

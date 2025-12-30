@@ -1,5 +1,4 @@
-use potassium::scheduler::Scheduler;
-use potassium::spec::Priority;
+use potassium::{Priority, Scheduler};
 
 fn main() {
     let scheduler = Scheduler::new();

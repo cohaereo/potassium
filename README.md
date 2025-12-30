@@ -15,6 +15,7 @@ It is designed so that the entire engine can be built around it in order to maxi
 ## Example Usage
 
 ```rust
+use potassium::{Scheduler, Priority};
 let scheduler = Scheduler::new();
 println!("Running with {} workers", scheduler.num_workers());
 
