@@ -2,7 +2,7 @@ use crate::job::JobHandle;
 use crate::spec::Priority;
 use crate::{spec::JobBuilder, util::SharedString};
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::thread::JoinHandle;
@@ -10,7 +10,9 @@ use std::thread::JoinHandle;
 const MAX_BATCH_SIZE: usize = 32;
 
 struct SchedulerState {
-    _threads: Mutex<Vec<JoinHandle<()>>>,
+    worker_threads: RwLock<Vec<JoinHandle<()>>>,
+    next_thread_to_wake: AtomicUsize,
+
     num_workers: usize,
 
     injectors: Injectors,
@@ -44,7 +46,8 @@ impl Scheduler {
             .unzip();
 
         let state = Arc::new(SchedulerState {
-            _threads: Mutex::new(Vec::with_capacity(num_workers)),
+            worker_threads: RwLock::new(Vec::with_capacity(num_workers)),
+            next_thread_to_wake: AtomicUsize::new(0),
             num_workers,
             injectors: Injectors::new(),
             stealers,
@@ -78,7 +81,7 @@ impl Scheduler {
                     worker_thread(WorkerContext { scheduler, queues })
                 })
                 .expect("Failed to spawn scheduler thread");
-            state._threads.lock().push(handle);
+            state.worker_threads.write().push(handle);
         }
 
         scheduler
@@ -102,6 +105,8 @@ impl Scheduler {
         self.inner
             .num_jobs_queued
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+
+        self.wake_one_worker();
 
         handle
     }
@@ -137,6 +142,28 @@ impl Scheduler {
         self.inner
             .paused
             .store(false, std::sync::atomic::Ordering::Release);
+
+        self.wake_all_workers();
+    }
+
+    fn wake_all_workers(&self) {
+        let worker_threads = self.inner.worker_threads.read();
+        for thread in worker_threads.iter() {
+            thread.thread().unpark();
+        }
+    }
+
+    fn wake_one_worker(&self) {
+        let worker_threads = self.inner.worker_threads.read();
+        if !worker_threads.is_empty() {
+            let idx = self
+                .inner
+                .next_thread_to_wake
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                % worker_threads.len();
+
+            worker_threads[idx].thread().unpark();
+        }
     }
 
     fn try_steal_job(&self, work_queues: &WorkQueues) -> Option<JobHandle> {
@@ -176,7 +203,8 @@ impl Scheduler {
             .exiting
             .store(true, std::sync::atomic::Ordering::Release);
 
-        let threads = std::mem::take(&mut *self.inner._threads.lock());
+        self.wake_all_workers();
+        let threads = std::mem::take(&mut *self.inner.worker_threads.write());
         for handle in threads {
             let _ = handle.join();
         }
@@ -366,10 +394,20 @@ fn worker_thread(ctx: WorkerContext) {
             .scheduler
             .inner
             .num_jobs_queued
-            .load(std::sync::atomic::Ordering::Acquire);
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         if num_jobs_queued == 0 || ctx.is_paused() {
-            std::thread::yield_now();
+            // Double-check the condition to avoid missing notifications
+            let num_jobs_queued = ctx
+                .scheduler
+                .inner
+                .num_jobs_queued
+                .load(std::sync::atomic::Ordering::Acquire);
+
+            if (num_jobs_queued == 0 || ctx.is_paused()) && !ctx.is_exiting() {
+                std::thread::park();
+            }
+
             continue;
         }
 
@@ -392,11 +430,16 @@ fn worker_thread(ctx: WorkerContext) {
                 .inner
                 .num_jobs_queued
                 .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        } else {
+            // No job found but count > 0, likely all jobs are running or paused
+            // Park briefly to avoid spinning
+            std::thread::park_timeout(std::time::Duration::from_micros(100));
         }
     }
 }
 
 fn notify_dependents(ctx: &WorkerContext, job: &JobHandle) {
+    let mut any_scheduled = false;
     for dependent in job.inner.dependents.read().iter() {
         let remaining = dependent
             .inner
@@ -423,7 +466,13 @@ fn notify_dependents(ctx: &WorkerContext, job: &JobHandle) {
 
             // All dependencies are complete, schedule the dependent job
             ctx.push_job(dependent.clone());
+            any_scheduled = true;
         }
+    }
+
+    // If we scheduled any dependent jobs, wake a waiting thread
+    if any_scheduled {
+        ctx.scheduler.wake_one_worker();
     }
 }
 
