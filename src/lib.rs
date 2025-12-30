@@ -5,6 +5,7 @@ mod builder;
 mod job;
 mod scheduler;
 mod util;
+mod worker;
 
 pub use builder::{JobBuilder, Priority};
 pub use job::{JobHandle, JobHandleWeak};
