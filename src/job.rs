@@ -170,9 +170,12 @@ impl JobHandleWeak {
     }
 }
 
+/// The result of a wait operation.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum WaitResult {
+    /// The job has completed.
     Completed,
+    /// The wait operation timed out.
     Timeout,
 }
 

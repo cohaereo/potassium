@@ -10,6 +10,6 @@ mod worker;
 
 pub use builder::{JobBuilder, Priority};
 pub use config::{SchedulerConfiguration, ThreadPriority, WorkerConfiguration};
-pub use job::{JobHandle, JobHandleWeak};
+pub use job::{JobHandle, JobHandleWeak, WaitResult};
 pub use scheduler::Scheduler;
 pub use util::SharedString;
