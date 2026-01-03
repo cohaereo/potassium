@@ -42,28 +42,30 @@ impl Injectors {
         }
     }
 
-    fn steal_batch_and_pop(&self, work_queues: &WorkQueues) -> Option<JobHandle> {
-        for priority in Priority::ALL {
-            let injector = match priority {
-                Priority::High => &self.high,
-                Priority::Medium => &self.medium,
-                Priority::Low => &self.low,
-            };
+    fn steal_batch_and_pop(
+        &self,
+        work_queues: &WorkQueues,
+        priority: Priority,
+    ) -> Option<JobHandle> {
+        let injector = match priority {
+            Priority::High => &self.high,
+            Priority::Medium => &self.medium,
+            Priority::Low => &self.low,
+        };
 
-            loop {
-                match injector.steal_batch_with_limit_and_pop(
-                    match priority {
-                        Priority::High => &work_queues.high,
-                        Priority::Medium => &work_queues.medium,
-                        Priority::Low => &work_queues.low,
-                    },
-                    MAX_BATCH_SIZE,
-                ) {
-                    Steal::Success(job) => return Some(job),
-                    Steal::Empty => break,
-                    Steal::Retry => continue,
-                };
-            }
+        loop {
+            match injector.steal_batch_with_limit_and_pop(
+                match priority {
+                    Priority::High => &work_queues.high,
+                    Priority::Medium => &work_queues.medium,
+                    Priority::Low => &work_queues.low,
+                },
+                MAX_BATCH_SIZE,
+            ) {
+                Steal::Success(job) => return Some(job),
+                Steal::Empty => break,
+                Steal::Retry => continue,
+            };
         }
 
         None
@@ -134,17 +136,23 @@ impl WorkerContext {
             if let Some(job) = job {
                 return Some(job);
             }
+
+            // Try to steal from other workers and the global injector
+            if let Some(job) = self.try_steal_job(&self.queues, priority) {
+                return Some(job);
+            }
+
+            if let Some(j) = self
+                .scheduler
+                .inner
+                .injectors
+                .steal_batch_and_pop(&self.queues, priority)
+            {
+                return Some(j);
+            }
         }
 
-        // Try to steal from other workers and the global injector
-        if let Some(job) = self.try_steal_job(&self.queues) {
-            return Some(job);
-        }
-
-        self.scheduler
-            .inner
-            .injectors
-            .steal_batch_and_pop(&self.queues)
+        None
     }
 
     fn push_job(&self, job: JobHandle) {
@@ -155,31 +163,29 @@ impl WorkerContext {
         }
     }
 
-    fn try_steal_job(&self, work_queues: &WorkQueues) -> Option<JobHandle> {
+    fn try_steal_job(&self, work_queues: &WorkQueues, priority: Priority) -> Option<JobHandle> {
         for stealer in &self.scheduler.inner.stealers {
             if stealer.owner == work_queues.owner {
                 continue;
             }
 
-            for priority in Priority::ALL {
-                loop {
-                    let stealer = match priority {
-                        Priority::High => &stealer.high,
-                        Priority::Medium => &stealer.medium,
-                        Priority::Low => &stealer.low,
-                    };
+            loop {
+                let stealer = match priority {
+                    Priority::High => &stealer.high,
+                    Priority::Medium => &stealer.medium,
+                    Priority::Low => &stealer.low,
+                };
 
-                    let worker = match priority {
-                        Priority::High => &work_queues.high,
-                        Priority::Medium => &work_queues.medium,
-                        Priority::Low => &work_queues.low,
-                    };
+                let worker = match priority {
+                    Priority::High => &work_queues.high,
+                    Priority::Medium => &work_queues.medium,
+                    Priority::Low => &work_queues.low,
+                };
 
-                    match stealer.steal_batch_with_limit_and_pop(worker, MAX_BATCH_SIZE) {
-                        Steal::Success(job) => return Some(job),
-                        Steal::Empty => break,
-                        Steal::Retry => continue,
-                    }
+                match stealer.steal_batch_with_limit_and_pop(worker, MAX_BATCH_SIZE) {
+                    Steal::Success(job) => return Some(job),
+                    Steal::Empty => break,
+                    Steal::Retry => continue,
                 }
             }
         }
