@@ -1,3 +1,4 @@
+use gdt_cpus::CoreType;
 use smallvec::{SmallVec, smallvec};
 
 /// Configuration for an individual worker thread.
@@ -77,6 +78,7 @@ impl SchedulerConfiguration {
         let workers = socket
             .cores
             .iter()
+            .filter(|c| c.core_type == CoreType::Performance)
             .map(|_core| WorkerConfiguration {
                 affinity: SmallVec::new(),
                 ..Default::default()
@@ -93,6 +95,7 @@ impl SchedulerConfiguration {
         let workers = socket
             .cores
             .iter()
+            .filter(|c| c.core_type == CoreType::Performance)
             .map(|core| WorkerConfiguration {
                 affinity: smallvec![core.logical_processor_ids[0]],
                 ..Default::default()
@@ -109,6 +112,7 @@ impl SchedulerConfiguration {
         let workers = socket
             .cores
             .iter()
+            .filter(|c| c.core_type == CoreType::Performance)
             .flat_map(|core| core.logical_processor_ids.iter().cloned())
             .map(|lp_id| WorkerConfiguration {
                 affinity: smallvec![lp_id],
