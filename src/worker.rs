@@ -1,6 +1,6 @@
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 
-use crate::{JobHandle, Priority, Scheduler};
+use crate::{JobHandle, Priority, Scheduler, job::JobState};
 
 const MAX_BATCH_SIZE: usize = 32;
 
@@ -235,17 +235,27 @@ pub fn worker_thread(ctx: WorkerContext) {
         }
 
         if let Some(job) = ctx.fetch_job() {
+            if matches!(job.state(), JobState::Completed | JobState::Running) {
+                panic!(
+                    "Fetched job {} in invalid state {:?}. This indicates a bug in the scheduler, as running or completed jobs should not be re-scheduled.",
+                    job.name(),
+                    job.state()
+                );
+            }
+
             // Execute the job
             let Some(job_body) = (unsafe { job.take_body() }) else {
                 panic!("Job body already taken for job {}", job.name());
             };
+
+            job.set_state(JobState::Running);
 
             {
                 profiling::scope!(job.name());
                 (job_body)();
             }
 
-            job.set_completed();
+            job.set_state(JobState::Completed);
             notify_dependents(&ctx, &job);
 
             // Decrement the queued job count

@@ -1,5 +1,5 @@
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32};
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 
@@ -16,7 +16,6 @@ pub struct JobHandle {
 
 pub(crate) struct JobHandleInner {
     name: SharedString,
-    completed: AtomicBool,
     body: UnsafeCell<Option<Box<dyn FnOnce() + Send + 'static>>>,
     pub(crate) priority: Priority,
 
@@ -24,6 +23,8 @@ pub(crate) struct JobHandleInner {
     pub(crate) dependents: RwLock<SmallVec<[JobHandle; 2]>>,
     pub(crate) remaining_dependencies: AtomicU32,
     pub(crate) enqueued: AtomicBool,
+
+    state: AtomicJobState,
 }
 
 unsafe impl Sync for JobHandleInner {}
@@ -36,13 +37,14 @@ impl JobHandle {
         let j = JobHandle {
             inner: Arc::new(JobHandleInner {
                 name: spec.name,
-                completed: AtomicBool::new(false),
                 body: UnsafeCell::new(Some(Box::new(body))),
                 priority: spec.priority,
                 remaining_dependencies: AtomicU32::new(spec.dependencies.len() as u32),
                 dependencies: spec.dependencies.iter().map(|d| d.downgrade()).collect(),
                 dependents: RwLock::new(SmallVec::new()),
                 enqueued: AtomicBool::new(false),
+
+                state: AtomicJobState::new(JobState::New),
             }),
         };
 
@@ -93,11 +95,24 @@ impl JobHandle {
         &self.inner.name
     }
 
+    /// Returns the current state of the job.
+    pub fn state(&self) -> JobState {
+        self.inner.state.load()
+    }
+
+    /// Returns whether the job is currently running.
+    pub fn is_running(&self) -> bool {
+        self.state() == JobState::Running
+    }
+
+    /// Returns whether the job is currently yielded.
+    pub fn is_yielded(&self) -> bool {
+        self.state() == JobState::Yielded
+    }
+
     /// Returns whether the job has completed.
     pub fn is_completed(&self) -> bool {
-        self.inner
-            .completed
-            .load(std::sync::atomic::Ordering::Acquire)
+        self.state() == JobState::Completed
     }
 
     /// Returns the dependencies of the job.
@@ -119,10 +134,8 @@ impl JobHandle {
         self.inner.priority
     }
 
-    pub(crate) fn set_completed(&self) {
-        self.inner
-            .completed
-            .store(true, std::sync::atomic::Ordering::Release);
+    pub(crate) fn set_state(&self, new_state: JobState) {
+        self.inner.state.store(new_state);
     }
 
     pub(crate) unsafe fn take_body(&self) -> Option<Box<dyn FnOnce() + Send + 'static>> {
@@ -187,4 +200,37 @@ pub enum WaitResult {
 #[derive(Clone)]
 pub struct JobHandleWeak {
     pub(crate) inner: Weak<JobHandleInner>,
+}
+
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum JobState {
+    New = 0,
+    Running = 1,
+    Yielded = 2,
+    Completed = 3,
+}
+
+pub struct AtomicJobState(AtomicU8);
+
+impl AtomicJobState {
+    pub fn new(state: JobState) -> Self {
+        AtomicJobState(AtomicU8::new(state as u8))
+    }
+
+    pub fn load(&self) -> JobState {
+        // SAFETY: AtomicJobState can only hold valid JobState values
+        unsafe { std::mem::transmute(self.0.load(std::sync::atomic::Ordering::Acquire)) }
+    }
+
+    pub fn store(&self, new_value: JobState) {
+        self.0
+            .store(new_value as u8, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl Default for AtomicJobState {
+    fn default() -> Self {
+        Self::new(JobState::New)
+    }
 }
