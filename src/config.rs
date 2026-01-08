@@ -122,6 +122,24 @@ impl SchedulerConfiguration {
 
         Self { workers }
     }
+
+    /// Spawns one worker per logical CPU core, but does not pin them to any specific cores.
+    pub fn all_logical_cores_unpinned() -> Self {
+        let cpu = gdt_cpus::cpu_info().expect("Failed to get CPU info");
+        let socket = cpu.sockets.first().expect("No CPU sockets found?");
+        let workers = socket
+            .cores
+            .iter()
+            .filter(|c| c.core_type == CoreType::Performance)
+            .flat_map(|core| core.logical_processor_ids.iter().cloned())
+            .map(|_lp_id| WorkerConfiguration {
+                affinity: SmallVec::new(),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+
+        Self { workers }
+    }
 }
 
 impl Default for SchedulerConfiguration {
