@@ -2,9 +2,8 @@ use crate::SchedulerConfiguration;
 use crate::job::JobHandle;
 use crate::worker::{Injectors, WorkQueues, WorkStealers, WorkerContext, WorkerId, worker_thread};
 use crate::{builder::JobBuilder, util::SharedString};
-use parking_lot::RwLock;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
 
 pub(crate) struct SchedulerState {
@@ -88,7 +87,11 @@ impl Scheduler {
                     worker_thread(WorkerContext::new(scheduler, queues));
                 })
                 .expect("Failed to spawn scheduler thread");
-            state.worker_threads.write().push(handle);
+            state
+                .worker_threads
+                .write()
+                .expect("Failed to acquire worker_threads lock")
+                .push(handle);
         }
 
         scheduler
@@ -266,7 +269,13 @@ impl Scheduler {
             .store(true, std::sync::atomic::Ordering::Release);
 
         self.wake_all_workers();
-        let threads = std::mem::take(&mut *self.inner.worker_threads.write());
+        let threads = std::mem::take(
+            &mut *self
+                .inner
+                .worker_threads
+                .write()
+                .expect("Failed to acquire worker_threads lock"),
+        );
         for handle in threads {
             let _ = handle.join();
         }
@@ -281,14 +290,24 @@ impl Scheduler {
 
 impl Scheduler {
     pub(crate) fn wake_all_workers(&self) {
-        let worker_threads = self.inner.worker_threads.read();
+        let worker_threads = self
+            .inner
+            .worker_threads
+            .read()
+            .expect("Failed to acquire worker_threads lock");
+
         for thread in worker_threads.iter() {
             thread.thread().unpark();
         }
     }
 
     pub(crate) fn wake_one_worker(&self) {
-        let worker_threads = self.inner.worker_threads.read();
+        let worker_threads = self
+            .inner
+            .worker_threads
+            .read()
+            .expect("Failed to acquire worker_threads lock");
+
         if !worker_threads.is_empty() {
             let idx = self
                 .inner
@@ -315,9 +334,10 @@ impl Drop for SchedulerState {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use crate::builder::Priority;
     use crate::scheduler::Scheduler;
-    use parking_lot::Mutex;
 
     #[test]
     fn test_simple_jobs() {
@@ -387,7 +407,7 @@ mod tests {
                     .job_builder("priority_test")
                     .priority(priority)
                     .spawn(move || {
-                        ORDER.lock().push(i);
+                        ORDER.lock().unwrap().push(i);
                     });
             }
         }
@@ -395,7 +415,7 @@ mod tests {
 
         scheduler.wait_for_all();
 
-        let order = ORDER.lock();
+        let order = ORDER.lock().unwrap();
         assert_eq!(*order, vec![2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0]); // High priority (2) should execute first
     }
 
@@ -410,7 +430,7 @@ mod tests {
             .priority(Priority::Medium)
             .spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(50));
-                LOG.lock().push("A");
+                LOG.lock().unwrap().push("A");
             });
 
         let job_b = scheduler
@@ -419,7 +439,7 @@ mod tests {
             .dependencies(vec![job_a])
             .spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(70));
-                LOG.lock().push("B");
+                LOG.lock().unwrap().push("B");
             });
 
         let job_c = scheduler
@@ -427,7 +447,7 @@ mod tests {
             .priority(Priority::Medium)
             .dependencies(vec![job_b])
             .spawn(|| {
-                LOG.lock().push("C");
+                LOG.lock().unwrap().push("C");
             });
 
         let _job_d = scheduler
@@ -435,12 +455,12 @@ mod tests {
             .priority(Priority::Medium)
             .dependencies(vec![job_c])
             .spawn(|| {
-                LOG.lock().push("D");
+                LOG.lock().unwrap().push("D");
             });
 
         scheduler.wait_for_all();
 
-        let log = LOG.lock();
+        let log = LOG.lock().unwrap();
         assert_eq!(*log, vec!["A", "B", "C", "D"]); // Jobs should execute in order A -> B -> C
     }
 

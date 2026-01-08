@@ -263,7 +263,13 @@ pub fn worker_thread(ctx: WorkerContext) {
 
 fn notify_dependents(ctx: &WorkerContext, job: &JobHandle) {
     let mut any_scheduled = false;
-    for dependent in job.inner.dependents.read().iter() {
+    for dependent in job
+        .inner
+        .dependents
+        .read()
+        .expect("Failed to acquire JobHandle dependents read lock")
+        .iter()
+    {
         let remaining = dependent
             .inner
             .remaining_dependencies

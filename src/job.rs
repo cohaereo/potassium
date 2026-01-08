@@ -1,9 +1,8 @@
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU32};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 
-use parking_lot::RwLock;
 use smallvec::SmallVec;
 
 use crate::builder::Priority;
@@ -52,7 +51,12 @@ impl JobHandle {
             for dependency in &spec.dependencies {
                 // Add this job as a dependent to each dependency, subtracting from the dependency counter if the dependency is already completed
                 // We keep the write lock during this check, so that we don't miss a completion that happens after pushing but before checking is_completed
-                let mut dependents = dependency.inner.dependents.write();
+                let mut dependents = dependency
+                    .inner
+                    .dependents
+                    .write()
+                    .expect("Failed to acquire JobHandle dependents write lock");
+
                 if dependency.is_completed() {
                     j.inner
                         .remaining_dependencies
