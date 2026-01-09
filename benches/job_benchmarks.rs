@@ -67,13 +67,14 @@ fn scheduler_benchmark(c: &mut Criterion) {
                         });
                     },
                 );
+                scheduler.shutdown();
             }
             group.finish();
         }
     }
 
     // Benchmark 2: Priority scheduling stress test
-    let scheduler = Scheduler::with_workers(cpus);
+    let scheduler = Scheduler::default();
     let mut group = c.benchmark_group("priority_scheduling");
     for job_count in [500, 2_000, 5_000] {
         group.bench_with_input(
@@ -241,6 +242,8 @@ fn scheduler_benchmark(c: &mut Criterion) {
             scheduler.wait_for_all();
         });
     });
+
+    scheduler.shutdown();
 }
 
 criterion_group!(benches, scheduler_benchmark);
