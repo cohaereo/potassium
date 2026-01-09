@@ -163,14 +163,24 @@ impl Scheduler {
 
         self.wake_one_worker();
 
+        self.process_free_queue();
+
+        handle
+    }
+
+    pub(crate) fn push_job(&self, job: JobHandle) {
+        self.inner.injectors.push(job);
+        self.wake_one_worker();
+        self.process_free_queue();
+    }
+
+    fn process_free_queue(&self) {
         const FREE_QUEUE_QUOTA: usize = 64;
         for _ in 0..FREE_QUEUE_QUOTA {
             if self.inner.free_queue_rx.try_recv().is_err() {
                 break;
             }
         }
-
-        handle
     }
 
     /// Creates a new JobBuilder

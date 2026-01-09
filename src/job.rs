@@ -6,6 +6,7 @@ use std::time::Duration;
 use fibrous::{FiberHandle, FiberStack};
 use smallvec::SmallVec;
 
+use crate::Scheduler;
 use crate::builder::Priority;
 use crate::fiber::FiberContext;
 use crate::util::SharedString;
@@ -13,10 +14,10 @@ use crate::util::SharedString;
 /// A shared handle to a scheduled job.
 #[derive(Clone)]
 pub struct JobHandle {
-    pub(crate) inner: Arc<JobHandleInner>,
+    pub(crate) inner: Arc<JobData>,
 }
 
-pub(crate) struct JobHandleInner {
+pub(crate) struct JobData {
     name: SharedString,
     body: UnsafeCell<Option<Box<dyn FnOnce() + Send + 'static>>>,
     pub(crate) priority: Priority,
@@ -31,8 +32,8 @@ pub(crate) struct JobHandleInner {
     state: AtomicJobState,
 }
 
-unsafe impl Send for JobHandleInner {}
-unsafe impl Sync for JobHandleInner {}
+unsafe impl Send for JobData {}
+unsafe impl Sync for JobData {}
 
 impl JobHandle {
     pub(crate) fn new<F>(spec: crate::builder::JobBuilder, body: F) -> (Self, bool)
@@ -40,7 +41,7 @@ impl JobHandle {
         F: FnOnce() + Send + 'static,
     {
         let j = JobHandle {
-            inner: Arc::new(JobHandleInner {
+            inner: Arc::new(JobData {
                 name: spec.name,
                 body: UnsafeCell::new(Some(Box::new(body))),
                 priority: spec.priority,
@@ -221,6 +222,19 @@ impl JobHandle {
         );
     }
 
+    /// Creates a JobWaker that can be used to wake this job when it's yielded.
+    pub fn create_waker(&self, scheduler: &Scheduler) -> JobWaker {
+        self.inner
+            .remaining_dependencies
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+
+        JobWaker {
+            handle: self.clone(),
+            scheduler: scheduler.clone(),
+            waked: AtomicBool::new(false),
+        }
+    }
+
     /// Waits for the job to complete, returning a WaitResult indicating whether it completed or timed out
     pub fn wait_timeout(&self, timeout: Duration) -> WaitResult {
         profiling::scope!(
@@ -266,7 +280,7 @@ pub enum WaitResult {
 /// A weak reference to a scheduled job.
 #[derive(Clone)]
 pub struct JobHandleWeak {
-    pub(crate) inner: Weak<JobHandleInner>,
+    pub(crate) inner: Weak<JobData>,
 }
 
 #[repr(u8)]
@@ -299,5 +313,72 @@ impl AtomicJobState {
 impl Default for AtomicJobState {
     fn default() -> Self {
         Self::new(JobState::New)
+    }
+}
+
+/// A single-use signal to wake a yielded job.
+///
+/// Multiple signals can be created for the same job, but the job will only be resumed once all signals have been used.
+///
+/// When the JobWaker is dropped, it will automatically call `wake`, ensuring that the job is resumed even if the waker goes out of scope.
+pub struct JobWaker {
+    handle: JobHandle,
+    scheduler: Scheduler,
+    waked: AtomicBool,
+}
+
+impl JobWaker {
+    /// Wakes the job associated with this waker, re-enqueuing it in the scheduler.
+    pub fn wake(self) {
+        self.wake_internal();
+    }
+
+    fn wake_internal(&self) {
+        if self.waked.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            // Already waked
+            return;
+        }
+
+        let remaining = self
+            .handle
+            .inner
+            .remaining_dependencies
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+
+        // Sanity check. If the last value was 0, we counted a dependency too many somewhere
+        debug_assert!(
+            remaining > 0,
+            "Job {} has negative remaining dependencies",
+            self.handle.name()
+        );
+
+        if remaining == 1 {
+            let is_already_enqueued = self
+                .handle
+                .inner
+                .enqueued
+                .swap(true, std::sync::atomic::Ordering::AcqRel);
+            if is_already_enqueued {
+                // This can happen if a job waker is used when the job is actually already enqueued
+                return;
+            }
+
+            // All dependencies are complete, schedule the dependent job
+            self.scheduler.push_job(self.handle.clone());
+        }
+    }
+
+    pub fn into_raw(self) -> *mut Self {
+        Box::into_raw(Box::new(self))
+    }
+
+    pub unsafe fn from_raw(ptr: *mut Self) -> Self {
+        unsafe { *Box::from_raw(ptr) }
+    }
+}
+
+impl Drop for JobWaker {
+    fn drop(&mut self) {
+        self.wake_internal();
     }
 }

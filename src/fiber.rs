@@ -2,7 +2,10 @@ use std::cell::RefCell;
 
 use fibrous::{DefaultFiberApi, FiberApi, FiberHandle};
 
-use crate::{JobHandle, Scheduler, job::JobState};
+use crate::{
+    JobHandle, Scheduler,
+    job::{JobState, JobWaker},
+};
 
 pub(crate) struct FiberContext {
     /// The handle to the worker thread's fiber.
@@ -54,6 +57,14 @@ impl FiberContext {
         FIBER_CONTEXT.with(|ctx| ctx.borrow().as_ref().map(|c| c.scheduler.clone()))
     }
 
+    pub fn create_waker() -> Option<JobWaker> {
+        Self::current_job().map(|j| {
+            j.create_waker(Self::scheduler().as_ref().expect(
+                "unreachable: Scheduler not found in fiber context, but current job is valid?",
+            ))
+        })
+    }
+
     /// Yield the current job back to the scheduler
     /// Returns true if yielded, false if not in a fiber context
     pub fn yield_current() -> bool {
@@ -62,6 +73,11 @@ impl FiberContext {
             let c = ctx_ref.as_ref()?;
             Some((c.current_job.clone()?, c.worker_fiber))
         }) {
+            if current_job.remaining_dependencies() == 0 {
+                // No dependencies, no need to yield
+                return false;
+            }
+
             if let Some(current_fiber) = unsafe { *current_job.inner.fiber.get() } {
                 FiberContext::set_current_job(None);
                 current_job.set_state(JobState::Yielded);
