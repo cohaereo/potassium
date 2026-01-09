@@ -7,6 +7,7 @@ use fibrous::{FiberHandle, FiberStack};
 use smallvec::SmallVec;
 
 use crate::builder::Priority;
+use crate::fiber::FiberContext;
 use crate::util::SharedString;
 
 /// A shared handle to a scheduled job.
@@ -150,14 +151,74 @@ impl JobHandle {
 
     /// Waits for the job to complete.
     ///
+    /// This function will block the current thread until the job is completed, UNLESS it is called from within another job,
+    /// in which case it will yield the current job back to the scheduler.
+    ///
+    /// If you need to poll a long running job, consider using `is_complete` or `wait_timeout` instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a job attempts to wait on itself.
+    pub fn wait(&self) {
+        profiling::scope!("JobHandle::wait", &format!("name={}", self.name()));
+
+        if let Some(current_job) = FiberContext::current_job() {
+            if &raw const *current_job.inner.as_ref() == &raw const *self.inner.as_ref() {
+                panic!("A job cannot wait on itself!");
+            }
+
+            self.wait_async(current_job);
+        } else {
+            self.wait_blocking();
+        }
+    }
+
+    /// Waits for the job to complete.
+    ///
     /// This function will block the current thread until the job is completed.
     ///
     /// If you need to poll a long running job, consider using `is_complete` or `wait_timeout` instead.
-    pub fn wait(&self) {
-        profiling::scope!("JobHandle::wait", &format!("name={}", self.name()));
+    pub fn wait_blocking(&self) {
+        profiling::scope!("JobHandle::wait_blocking", &format!("name={}", self.name()));
         while !self.is_completed() {
             std::thread::yield_now();
         }
+    }
+
+    /// Waits for the job to complete.
+    ///
+    /// This function will block the current thread until the job is completed.
+    ///
+    /// If you need to poll a long running job, consider using `is_complete` or `wait_timeout` instead.
+    fn wait_async(&self, current_job: JobHandle) {
+        profiling::scope!("JobHandle::wait_async", &format!("name={}", self.name()));
+
+        // Add current job as a dependent of this job. Once the job completes, it will re-enqueue the current (yielded) job.
+        {
+            let mut dependents = self.inner.dependents.write().expect(
+                "Failed to acquire JobHandle dependents write lock while adding waiting job as dependent",
+            );
+
+            // Double-check completion to avoid race
+            if self.is_completed() {
+                // Job completed while we were setting up, don't yield
+                current_job.set_state(JobState::Running);
+                return;
+            }
+
+            // Increment dependency counter to prevent re-execution
+            current_job
+                .inner
+                .remaining_dependencies
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+
+            dependents.push(current_job.clone());
+        }
+
+        assert!(
+            FiberContext::yield_current(),
+            "Job was not yielded even though we're yielding from a running job/fiber?"
+        );
     }
 
     /// Waits for the job to complete, returning a WaitResult indicating whether it completed or timed out

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use fibrous::{DefaultFiberApi, FiberApi, FiberHandle};
 
-use crate::{JobHandle, Scheduler};
+use crate::{JobHandle, Scheduler, job::JobState};
 
 pub(crate) struct FiberContext {
     /// The handle to the worker thread's fiber.
@@ -63,9 +63,19 @@ impl FiberContext {
             Some((c.current_job.clone()?, c.worker_fiber))
         }) {
             if let Some(current_fiber) = unsafe { *current_job.inner.fiber.get() } {
+                FiberContext::set_current_job(None);
+                current_job.set_state(JobState::Yielded);
+                // When we yield, the job leaves the scheduler's context, so mark it as not enqueued so any dependents can re-enqueue it when ready
+                current_job
+                    .inner
+                    .enqueued
+                    .store(false, std::sync::atomic::Ordering::Release);
                 unsafe {
                     DefaultFiberApi::switch_to_fiber(current_fiber, main_fiber);
                 }
+                current_job.set_state(JobState::Running);
+                FiberContext::set_current_job(Some(current_job));
+
                 true
             } else {
                 false
