@@ -1,11 +1,11 @@
 use crossbeam_channel::Receiver;
 
 use crate::SchedulerConfiguration;
-use crate::job::JobHandle;
+use crate::job::{JobHandle, JobResult};
 use crate::worker::{Injectors, WorkQueues, WorkStealers, WorkerContext, WorkerId, worker_thread};
 use crate::{builder::JobBuilder, util::SharedString};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 
 pub(crate) struct SchedulerState {
@@ -166,6 +166,41 @@ impl Scheduler {
         self.process_free_queue();
 
         handle
+    }
+
+    /// Spawns a new job with the given specification and body, returning a `JobResult` that can be used to retrieve the job's return value.
+    ///
+    /// **Note:** It is recommended to use [`JobBuilder::spawn_with_result`] instead, as it provides a more ergonomic API.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::default();
+    /// let job = scheduler
+    ///     .job_builder("job_with_return")
+    ///     .spawn_with_result(|| 21 * 2);
+    ///
+    /// assert_eq!(job.wait(), 42);
+    /// ```
+    pub fn spawn_with_result<'a, F, T>(
+        &'a self,
+        spec: impl Into<JobBuilder<'a>>,
+        body: F,
+    ) -> JobResult<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let result = Arc::new(Mutex::new(None));
+        let result_clone = result.clone();
+
+        let handle = self.spawn(spec, move || {
+            *result_clone.lock().unwrap() = Some(body());
+        });
+
+        JobResult { handle, result }
     }
 
     pub(crate) fn push_job(&self, job: JobHandle) {

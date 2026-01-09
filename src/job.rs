@@ -1,6 +1,6 @@
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32};
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
 use fibrous::{FiberHandle, FiberStack};
@@ -389,5 +389,25 @@ impl JobWaker {
 impl Drop for JobWaker {
     fn drop(&mut self) {
         self.wake_internal();
+    }
+}
+
+/// A handle to a job that produces a result.
+///
+/// The result can be retrieved by calling `wait`, which will block until the job is complete and return the result.
+pub struct JobResult<T> {
+    pub(crate) handle: JobHandle,
+    pub(crate) result: Arc<Mutex<Option<T>>>,
+}
+
+impl<T> JobResult<T> {
+    /// Waits for the job to complete and returns the result.
+    pub fn wait(self) -> T {
+        self.handle.wait();
+        self.result
+            .lock()
+            .unwrap()
+            .take()
+            .expect("Job did not produce a result")
     }
 }

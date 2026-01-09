@@ -1,4 +1,4 @@
-use crate::job::JobHandle;
+use crate::job::{JobHandle, JobResult};
 use crate::scheduler::Scheduler;
 use crate::util::SharedString;
 use smallvec::SmallVec;
@@ -104,6 +104,28 @@ impl<'a> JobBuilder<'a> {
         F: FnOnce() + Send + 'static,
     {
         self._scheduler.spawn(self, body)
+    }
+
+    /// Spawns the job with the given body.
+    ////
+    /// # Examples
+    ///
+    /// ```
+    /// use potassium::Scheduler;
+    ///
+    /// let scheduler = Scheduler::default();
+    /// let job = scheduler
+    ///     .job_builder("example_job")
+    ///     .spawn_with_result(|| 21 * 2);
+    ///
+    /// assert_eq!(job.wait(), 42);
+    /// ```
+    pub fn spawn_with_result<F, T>(self, body: F) -> JobResult<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        self._scheduler.spawn_with_result(self, body)
     }
 }
 

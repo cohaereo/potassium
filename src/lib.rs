@@ -11,7 +11,7 @@ mod worker;
 
 pub use builder::{JobBuilder, Priority};
 pub use config::{SchedulerConfiguration, ThreadPriority, WorkerConfiguration};
-pub use job::{JobHandle, JobHandleWeak, JobWaker, WaitResult};
+pub use job::{JobHandle, JobHandleWeak, JobResult, JobWaker, WaitResult};
 pub use scheduler::Scheduler;
 pub use util::SharedString;
 

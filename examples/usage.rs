@@ -4,12 +4,15 @@ fn main() {
     let scheduler = Scheduler::default();
     println!("Running with {} workers", scheduler.num_workers());
 
-    let _big_job = scheduler
-        .job_builder("big_job")
+    let long_job = scheduler
+        .job_builder("long_job")
         .priority(Priority::Low)
-        .spawn(|| {
+        .spawn_with_result(|| {
+            let start = std::time::Instant::now();
             std::thread::sleep(std::time::Duration::from_secs(2));
-            println!("Big job completed.");
+            let duration = start.elapsed();
+            println!("Long job completed.");
+            duration
         });
 
     scheduler.pause(); // Pause the scheduler in order to demonstrate priority ordering
@@ -42,6 +45,12 @@ fn main() {
 
     job_sync.wait();
     println!("Small job sync completed. Big job should finish shortly.");
+    let long_job_duration = long_job.wait();
+    println!(
+        "Long job took {:.2?} seconds",
+        long_job_duration.as_secs_f32()
+    );
+
     scheduler.wait_for_all();
     println!("All jobs completed.");
     scheduler.shutdown();
