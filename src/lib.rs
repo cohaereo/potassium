@@ -3,6 +3,7 @@
 
 mod builder;
 mod config;
+mod fiber;
 mod job;
 mod scheduler;
 mod util;

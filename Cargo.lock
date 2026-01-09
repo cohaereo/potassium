@@ -131,6 +131,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
+name = "context"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0adf149597f6e75ab7c41ec360dd1a74c86667cf0ef09bd3c207d508665f60e8"
+dependencies = [
+ "cc",
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -223,6 +234,16 @@ name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+
+[[package]]
+name = "fibrous"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32f744674521652b78cfdc8c09c76a2d6ec5a5eefbe2750b60a64c014bafcd75"
+dependencies = [
+ "cfg-if",
+ "context",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -387,6 +408,7 @@ version = "0.3.1"
 dependencies = [
  "criterion",
  "crossbeam-deque",
+ "fibrous",
  "gdt-cpus",
  "log",
  "profiling",

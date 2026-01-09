@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32};
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 
+use fibrous::{FiberHandle, FiberStack};
 use smallvec::SmallVec;
 
 use crate::builder::Priority;
@@ -24,9 +25,12 @@ pub(crate) struct JobHandleInner {
     pub(crate) remaining_dependencies: AtomicU32,
     pub(crate) enqueued: AtomicBool,
 
+    pub(crate) fiber_stack: UnsafeCell<Option<FiberStack>>,
+    pub(crate) fiber: UnsafeCell<Option<FiberHandle>>,
     state: AtomicJobState,
 }
 
+unsafe impl Send for JobHandleInner {}
 unsafe impl Sync for JobHandleInner {}
 
 impl JobHandle {
@@ -44,6 +48,8 @@ impl JobHandle {
                 dependents: RwLock::new(SmallVec::new()),
                 enqueued: AtomicBool::new(false),
 
+                fiber_stack: UnsafeCell::new(None),
+                fiber: UnsafeCell::new(None),
                 state: AtomicJobState::new(JobState::New),
             }),
         };

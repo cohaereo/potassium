@@ -11,6 +11,7 @@ keywords = ["fibers", "concurrency", "threading"]
 
 [dependencies]
 crossbeam-deque = "0.8.6"
+fibrous = "0.2.0"
 gdt-cpus = "25.12.0"
 log = "0.4.28"
 profiling = "1.0.17"

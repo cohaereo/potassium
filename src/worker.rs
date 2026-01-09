@@ -1,6 +1,7 @@
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
+use fibrous::{DefaultFiberApi, FiberApi, FiberStack};
 
-use crate::{JobHandle, Priority, Scheduler, job::JobState};
+use crate::{JobHandle, Priority, Scheduler, fiber::FiberContext, job::JobState};
 
 const MAX_BATCH_SIZE: usize = 32;
 
@@ -208,6 +209,8 @@ impl WorkerContext {
 }
 
 pub fn worker_thread(ctx: WorkerContext) {
+    FiberContext::initialize_worker_thread(ctx.scheduler.clone());
+
     loop {
         if ctx.is_exiting() {
             break;
@@ -235,38 +238,86 @@ pub fn worker_thread(ctx: WorkerContext) {
         }
 
         if let Some(job) = ctx.fetch_job() {
-            if matches!(job.state(), JobState::Completed | JobState::Running) {
-                panic!(
-                    "Fetched job {} in invalid state {:?}. This indicates a bug in the scheduler, as running or completed jobs should not be re-scheduled.",
-                    job.name(),
-                    job.state()
-                );
+            // if matches!(job.state(), JobState::Completed | JobState::Running) {
+            //     panic!(
+            //         "Fetched job {} in invalid state {:?}. This indicates a bug in the scheduler, as running or completed jobs should not be re-scheduled.",
+            //         job.name(),
+            //         job.state()
+            //     );
+            // }
+
+            // // Execute the job
+            // let Some(job_body) = (unsafe { job.take_body() }) else {
+            //     panic!("Job body already taken for job {}", job.name());
+            // };
+
+            if job.state() == JobState::New {
+                let stack = FiberStack::new(32 * 1024);
+                let job_handle_box = Box::new(job.clone());
+                let user_data = Box::into_raw(job_handle_box) as *mut ();
+                let fiber = unsafe {
+                    DefaultFiberApi::create_fiber(stack.as_pointer(), fiber_entry_point, user_data)
+                }
+                .expect("Failed to create fiber for job");
+                unsafe { *job.inner.fiber_stack.get() = Some(stack) };
+                unsafe { *job.inner.fiber.get() = Some(fiber) };
             }
 
-            // Execute the job
-            let Some(job_body) = (unsafe { job.take_body() }) else {
-                panic!("Job body already taken for job {}", job.name());
-            };
+            match job.state() {
+                JobState::New | JobState::Yielded => {
+                    let worker_fiber = FiberContext::worker_fiber().expect("Must have main fiber");
+                    let current_fiber =
+                        unsafe { *job.inner.fiber.get() }.expect("Job is missing fiber");
 
-            job.set_state(JobState::Running);
+                    FiberContext::set_current_job(Some(job.clone()));
+                    job.set_state(JobState::Running);
 
-            {
-                profiling::scope!(job.name());
-                (job_body)();
+                    unsafe {
+                        DefaultFiberApi::switch_to_fiber(worker_fiber, current_fiber);
+                    }
+
+                    handle_job_return(&ctx, job);
+                }
+                JobState::Running | JobState::Completed => {
+                    panic!(
+                        "Fetched job {} in invalid state {:?}. This indicates a bug in the scheduler, as running or completed jobs should not be re-scheduled.",
+                        job.name(),
+                        job.state()
+                    );
+                }
             }
-
-            job.set_state(JobState::Completed);
-            notify_dependents(&ctx, &job);
-
-            // Decrement the queued job count
-            ctx.scheduler
-                .inner
-                .num_jobs_queued
-                .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         } else {
             // No job found but count > 0, likely all jobs are running or paused
             // Park briefly to avoid spinning
             std::thread::park_timeout(std::time::Duration::from_micros(100));
+        }
+    }
+}
+
+fn handle_job_return(ctx: &WorkerContext, job: JobHandle) {
+    match job.state() {
+        JobState::Completed => {
+            // Job completed - clean up
+            if let Some(fiber) = unsafe { &mut *job.inner.fiber.get() }.take() {
+                unsafe {
+                    DefaultFiberApi::destroy_fiber(fiber);
+                }
+            }
+
+            notify_dependents(ctx, &job);
+
+            ctx.scheduler
+                .inner
+                .num_jobs_queued
+                .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        }
+        JobState::Yielded => {
+            // Job yielded - it's already been added as a dependent
+            // and will be re-enqueued when its dependency completes
+            // Don't decrement num_jobs_queued - it's still "active"
+        }
+        u => {
+            panic!("Invalid job state after returning: {u:?}");
         }
     }
 }
@@ -313,4 +364,38 @@ fn notify_dependents(ctx: &WorkerContext, job: &JobHandle) {
     if any_scheduled {
         ctx.scheduler.wake_one_worker();
     }
+}
+
+// Fiber entry point
+unsafe extern "C" fn fiber_entry_point(user_data: *mut ()) {
+    let job = unsafe { Box::from_raw(user_data as *mut JobHandle) };
+    {
+        FiberContext::set_current_job(Some((*job).clone()));
+        job.set_state(JobState::Running);
+
+        if let Some(job_body) = unsafe { job.take_body() } {
+            profiling::scope!(job.name());
+            (job_body)();
+        }
+
+        job.set_state(JobState::Completed);
+
+        // Clean up fiber stack
+        drop(unsafe { &mut *job.inner.fiber_stack.get() }.take());
+
+        FiberContext::set_current_job(None);
+
+        // NOTE: *nothing* should be allocated after this scope, as the fiber will be destroyed upon returning, and thus nothing gets Dropped
+    }
+
+    // Switch back to main fiber
+    let main_fiber = FiberContext::worker_fiber().expect("Must have main fiber");
+    let current_fiber = unsafe { *job.inner.fiber.get() }.expect("Job must have fiber");
+    drop(job);
+
+    unsafe {
+        DefaultFiberApi::switch_to_fiber(current_fiber, main_fiber);
+    }
+
+    unreachable!();
 }
