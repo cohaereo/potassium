@@ -1,3 +1,4 @@
+use crossbeam_channel::Sender;
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use fibrous::{DefaultFiberApi, FiberApi, FiberStack};
 
@@ -118,11 +119,16 @@ impl WorkQueues {
 pub struct WorkerContext {
     scheduler: Scheduler,
     queues: WorkQueues,
+    free_queue_tx: Sender<JobHandle>,
 }
 
 impl WorkerContext {
-    pub fn new(scheduler: Scheduler, queues: WorkQueues) -> Self {
-        Self { scheduler, queues }
+    pub fn new(scheduler: Scheduler, queues: WorkQueues, free_queue_tx: Sender<JobHandle>) -> Self {
+        Self {
+            scheduler,
+            queues,
+            free_queue_tx,
+        }
     }
 
     fn fetch_job(&self) -> Option<JobHandle> {
@@ -310,6 +316,8 @@ fn handle_job_return(ctx: &WorkerContext, job: JobHandle) {
                 .inner
                 .num_jobs_queued
                 .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+
+            let _ = ctx.free_queue_tx.send(job);
         }
         JobState::Yielded => {
             // Job yielded - it's already been added as a dependent

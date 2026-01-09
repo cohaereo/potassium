@@ -10,6 +10,7 @@ categories = ["concurrency", "asynchronous"]
 keywords = ["fibers", "concurrency", "threading"]
 
 [dependencies]
+crossbeam-channel = "0.5.15"
 crossbeam-deque = "0.8.6"
 fibrous = "0.2.0"
 gdt-cpus = "25.12.0"

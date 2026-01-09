@@ -1,3 +1,5 @@
+use crossbeam_channel::Receiver;
+
 use crate::SchedulerConfiguration;
 use crate::job::JobHandle;
 use crate::worker::{Injectors, WorkQueues, WorkStealers, WorkerContext, WorkerId, worker_thread};
@@ -19,6 +21,8 @@ pub(crate) struct SchedulerState {
 
     pub(crate) paused: AtomicBool,
     pub(crate) exiting: AtomicBool,
+
+    free_queue_rx: Receiver<JobHandle>,
 }
 
 /// Manages worker threads and job execution.
@@ -51,6 +55,8 @@ impl Scheduler {
             })
             .unzip();
 
+        let (free_queue_tx, free_queue_rx) = crossbeam_channel::unbounded();
+
         let state = Arc::new(SchedulerState {
             worker_threads: RwLock::new(Vec::with_capacity(num_workers)),
             next_thread_to_wake: AtomicUsize::new(0),
@@ -60,6 +66,7 @@ impl Scheduler {
             num_jobs_queued: AtomicUsize::new(0),
             paused: AtomicBool::new(false),
             exiting: AtomicBool::new(false),
+            free_queue_rx,
         });
 
         let scheduler = Scheduler {
@@ -71,6 +78,7 @@ impl Scheduler {
             let queues = workers
                 .pop()
                 .expect("unreachable: number of workers == number of threads");
+            let free_queue_tx_clone = free_queue_tx.clone();
             let handle = std::thread::Builder::new()
                 .name(format!("job-executor-{i}"))
                 .spawn(move || {
@@ -84,7 +92,7 @@ impl Scheduler {
                         // log::error!("Failed to set thread priority: {}", e);
                     }
 
-                    worker_thread(WorkerContext::new(scheduler, queues));
+                    worker_thread(WorkerContext::new(scheduler, queues, free_queue_tx_clone));
                 })
                 .expect("Failed to spawn scheduler thread");
             state
@@ -154,6 +162,13 @@ impl Scheduler {
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 
         self.wake_one_worker();
+
+        const FREE_QUEUE_QUOTA: usize = 64;
+        for _ in 0..FREE_QUEUE_QUOTA {
+            if self.inner.free_queue_rx.try_recv().is_err() {
+                break;
+            }
+        }
 
         handle
     }
