@@ -9,8 +9,8 @@ It is designed so that the entire engine can be built around it in order to maxi
 - ✅ Job dependencies
 - ✅ Priority scheduling
 - ✅ Configurable worker threads
+- ✅ [Fiber](https://crates.io/crates/fibrous) support (resumable jobs)
 - 🕑 Job graphs (DAGs) - coming soon
-- 🕑 [Fiber](https://crates.io/crates/fibrous) support (resumable jobs) - coming soon
 
 ## Example Usage
 
