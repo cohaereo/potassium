@@ -360,7 +360,9 @@ impl Drop for SchedulerState {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
+    use std::time::Duration;
 
+    use crate::WaitResult;
     use crate::builder::Priority;
     use crate::scheduler::Scheduler;
 
@@ -487,6 +489,34 @@ mod tests {
 
         let log = LOG.lock().unwrap();
         assert_eq!(*log, vec!["A", "B", "C", "D"]); // Jobs should execute in order A -> B -> C
+    }
+
+    #[test]
+    fn job_yielding() {
+        // It's important that we only have one worker here, to ensure that yielding works as expected
+        let scheduler = Scheduler::with_workers(1);
+        let scheduler_clone = scheduler.clone();
+        let job0 = scheduler
+            .job_builder("job_0")
+            .priority(Priority::Medium)
+            .spawn(move || {
+                let scheduler_clone2 = scheduler_clone.clone();
+                let job1 = scheduler_clone
+                    .job_builder("job_1")
+                    .priority(Priority::Medium)
+                    .spawn(move || {
+                        let job2 = scheduler_clone2
+                            .job_builder("job_2")
+                            .priority(Priority::Medium)
+                            .spawn(|| {});
+                        job2.wait();
+                    });
+                job1.wait();
+            });
+
+        if job0.wait_timeout(Duration::from_secs(3)) == WaitResult::Timeout {
+            panic!("Job did not complete in time");
+        }
     }
 
     // #[test]

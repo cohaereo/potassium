@@ -368,10 +368,19 @@ impl JobWaker {
         }
     }
 
+    /// Converts the JobWaker into a raw pointer. The pointer must be converted back using `from_raw` to avoid memory leaks.
+    ///
+    /// Note: This consumes the JobWaker and boxes it on the heap.
     pub fn into_raw(self) -> *mut Self {
         Box::into_raw(Box::new(self))
     }
 
+    /// Converts a raw JobWaker pointer back into a JobWaker.
+    ///
+    /// # Safety
+    ///
+    /// - The pointer must have been created using `into_raw`. Behavior is undefined otherwise
+    /// - The pointer may only be converted back once. Double conversion will lead to double free and undefined behavior.
     pub unsafe fn from_raw(ptr: *mut Self) -> Self {
         unsafe { *Box::from_raw(ptr) }
     }
