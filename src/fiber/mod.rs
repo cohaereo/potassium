@@ -1,3 +1,5 @@
+pub mod stack;
+
 use std::cell::RefCell;
 
 use fibrous::{DefaultFiberApi, FiberApi, FiberHandle};

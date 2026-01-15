@@ -1,6 +1,6 @@
 use crossbeam_channel::Sender;
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
-use fibrous::{DefaultFiberApi, FiberApi, FiberStack};
+use fibrous::{DefaultFiberApi, FiberApi};
 
 use crate::{JobHandle, Priority, Scheduler, fiber::FiberContext, job::JobState};
 
@@ -245,7 +245,9 @@ pub fn worker_thread(ctx: WorkerContext) {
 
         if let Some(job) = ctx.fetch_job() {
             if job.state() == JobState::New {
-                let stack = FiberStack::new(32 * 1024);
+                let stack = ctx.scheduler.inner.stack_pool.acquire_stack().expect(
+                    "Fiber stack pool exhausted. Consider increasing SchedulerConfiguration::stacks_per_worker",
+                );
                 let job_handle_box = Box::new(job.clone());
                 let user_data = Box::into_raw(job_handle_box) as *mut ();
                 let fiber = unsafe {
@@ -292,9 +294,8 @@ fn handle_job_return(ctx: &WorkerContext, job: JobHandle) {
             // Job completed - clean up
             if job.get_fiber().is_some() {
                 // SAFETY: This is the only place where fibers are/should be freed after job completion
-                unsafe {
-                    job.free_fiber();
-                }
+                let stack = unsafe { job.free_fiber() };
+                ctx.scheduler.inner.stack_pool.release_stack(stack);
             }
 
             notify_dependents(ctx, &job);

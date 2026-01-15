@@ -1,6 +1,7 @@
 use crossbeam_channel::Receiver;
 
 use crate::SchedulerConfiguration;
+use crate::fiber::stack::FiberStackPool;
 use crate::job::{JobHandle, JobResult};
 use crate::util::MutexExt;
 use crate::worker::{Injectors, WorkQueues, WorkStealers, WorkerContext, WorkerId, worker_thread};
@@ -19,6 +20,7 @@ pub(crate) struct SchedulerState {
 
     pub(crate) injectors: Injectors,
     pub(crate) stealers: Vec<WorkStealers>,
+    pub(crate) stack_pool: FiberStackPool,
 
     pub(crate) paused: AtomicBool,
     pub(crate) exiting: AtomicBool,
@@ -64,6 +66,10 @@ impl Scheduler {
             num_workers,
             injectors: Injectors::new(),
             stealers,
+            stack_pool: FiberStackPool::new(
+                num_workers * config.stacks_per_worker,
+                config.stack_size_bytes,
+            ),
             num_jobs_queued: AtomicUsize::new(0),
             paused: AtomicBool::new(false),
             exiting: AtomicBool::new(false),

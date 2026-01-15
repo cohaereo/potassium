@@ -17,9 +17,23 @@ pub struct WorkerConfiguration {
 pub struct SchedulerConfiguration {
     /// List of workers to create.
     pub workers: Vec<WorkerConfiguration>,
+
+    /// Number of stacks to allocate per worker.
+    ///
+    /// Note that created stacks are shared between fibers, so this does not limit the number of concurrent jobs.
+    pub stacks_per_worker: usize,
+
+    /// Size of each stack in bytes.
+    pub stack_size_bytes: usize,
 }
 
 impl SchedulerConfiguration {
+    const BASE: Self = Self {
+        workers: Vec::new(),
+        stacks_per_worker: 8,
+        stack_size_bytes: 32 * 1024,
+    };
+
     /// Spawns a single worker thread, not pinned to any specific core.
     pub fn single_core() -> Self {
         Self {
@@ -27,6 +41,7 @@ impl SchedulerConfiguration {
                 affinity: SmallVec::new(),
                 ..Default::default()
             }],
+            ..Self::BASE
         }
     }
 
@@ -39,7 +54,10 @@ impl SchedulerConfiguration {
             })
             .collect::<Vec<_>>();
 
-        Self { workers }
+        Self {
+            workers,
+            ..Self::BASE
+        }
     }
 
     /// Spawns the specified number of worker threads, pinning each to a specific logical core.
@@ -52,7 +70,10 @@ impl SchedulerConfiguration {
             })
             .collect::<Vec<_>>();
 
-        Self { workers }
+        Self {
+            workers,
+            ..Self::BASE
+        }
     }
 
     /// Spawns the specified number of worker threads, pinning each to the first logical processor of the physical core corresponding to its index.
@@ -68,7 +89,10 @@ impl SchedulerConfiguration {
             });
         }
 
-        Self { workers }
+        Self {
+            workers,
+            ..Self::BASE
+        }
     }
 
     /// Spawns one worker per physical CPU core, but does not pin them to any specific cores.
@@ -85,7 +109,10 @@ impl SchedulerConfiguration {
             })
             .collect::<Vec<_>>();
 
-        Self { workers }
+        Self {
+            workers,
+            ..Self::BASE
+        }
     }
 
     /// Spawns one worker per physical CPU core, pinning each to it's first logical processor.
@@ -102,7 +129,10 @@ impl SchedulerConfiguration {
             })
             .collect::<Vec<_>>();
 
-        Self { workers }
+        Self {
+            workers,
+            ..Self::BASE
+        }
     }
 
     /// Spawns one worker per logical CPU core, pinning each to that core.
@@ -120,7 +150,10 @@ impl SchedulerConfiguration {
             })
             .collect::<Vec<_>>();
 
-        Self { workers }
+        Self {
+            workers,
+            ..Self::BASE
+        }
     }
 
     /// Spawns one worker per logical CPU core, but does not pin them to any specific cores.
@@ -138,7 +171,10 @@ impl SchedulerConfiguration {
             })
             .collect::<Vec<_>>();
 
-        Self { workers }
+        Self {
+            workers,
+            ..Self::BASE
+        }
     }
 }
 

@@ -173,14 +173,15 @@ impl JobHandle {
         *self.inner.fiber.lock2()
     }
 
-    pub(crate) unsafe fn free_fiber(&self) {
+    #[must_use = "The returned FiberStack must be returned to the fiber stack pool"]
+    pub(crate) unsafe fn free_fiber(&self) -> FiberStack {
         let fiber = self
             .inner
             .fiber
             .lock2()
             .take()
             .expect("free_fiber: fiber is already freed?");
-        let _stack = self
+        let stack = self
             .inner
             .fiber_stack
             .lock2()
@@ -190,6 +191,8 @@ impl JobHandle {
         unsafe {
             DefaultFiberApi::destroy_fiber(fiber);
         }
+
+        stack
     }
 
     /// Waits for the job to complete.
