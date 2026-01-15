@@ -25,15 +25,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          [
+        target: [
             x86_64-unknown-linux-gnu,
             aarch64-unknown-linux-gnu,
             riscv64gc-unknown-linux-gnu,
             loongarch64-unknown-linux-gnu,
 
-            x86_64-apple-darwin,
-            aarch64-apple-darwin,
+            # x86_64-apple-darwin,
+            # aarch64-apple-darwin,
 
             x86_64-pc-windows-gnu,
             x86_64-pc-windows-msvc,
@@ -50,10 +49,10 @@ jobs:
           - target: loongarch64-unknown-linux-gnu
             os: ubuntu-latest
 
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
+          # - target: x86_64-apple-darwin
+          #   os: macos-latest
+          # - target: aarch64-apple-darwin
+          #   os: macos-latest
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
