@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
-use fibrous::{FiberHandle, FiberStack};
+use fibrous::{DefaultFiberApi, FiberApi, FiberHandle, FiberStack};
 use smallvec::SmallVec;
 
 use crate::Scheduler;
@@ -26,8 +26,9 @@ pub(crate) struct JobData {
     pub(crate) remaining_dependencies: AtomicU32,
     pub(crate) enqueued: AtomicBool,
 
-    pub(crate) fiber_stack: Mutex<Option<FiberStack>>,
-    pub(crate) fiber: Mutex<Option<FiberHandle>>,
+    fiber_stack: Mutex<Option<FiberStack>>,
+    fiber: Mutex<Option<FiberHandle>>,
+
     state: AtomicJobState,
 }
 
@@ -149,6 +150,48 @@ impl JobHandle {
         self.inner.body.lock().ok()?.take()
     }
 
+    pub(crate) fn setup_fiber(&self, fiber: FiberHandle, stack: FiberStack) {
+        let mut fiber_lock = self.inner.fiber.lock2();
+        let mut stack_lock = self.inner.fiber_stack.lock2();
+
+        debug_assert!(
+            fiber_lock.is_none(),
+            "Tried to setup fiber for job '{}' but it already has a fiber assigned.",
+            self.name()
+        );
+        debug_assert!(
+            stack_lock.is_none(),
+            "Tried to setup fiber stack for job '{}' but it already has a stack assigned.",
+            self.name()
+        );
+
+        *fiber_lock = Some(fiber);
+        *stack_lock = Some(stack);
+    }
+
+    pub(crate) fn get_fiber(&self) -> Option<FiberHandle> {
+        *self.inner.fiber.lock2()
+    }
+
+    pub(crate) unsafe fn free_fiber(&self) {
+        let fiber = self
+            .inner
+            .fiber
+            .lock2()
+            .take()
+            .expect("free_fiber: fiber is already freed?");
+        let _stack = self
+            .inner
+            .fiber_stack
+            .lock2()
+            .take()
+            .expect("free_fiber: fiber stack is already freed?");
+
+        unsafe {
+            DefaultFiberApi::destroy_fiber(fiber);
+        }
+    }
+
     /// Waits for the job to complete.
     ///
     /// This function will block the current thread until the job is completed, UNLESS it is called from within another job,
@@ -255,6 +298,28 @@ impl JobHandle {
         JobHandleWeak {
             inner: Arc::downgrade(&self.inner),
         }
+    }
+}
+
+impl Drop for JobData {
+    fn drop(&mut self) {
+        debug_assert!(
+            self.body.lock2().is_none(),
+            "JobData for job '{}' is being dropped while the job body is still present.",
+            self.name
+        );
+
+        debug_assert!(
+            self.fiber.lock2().is_none(),
+            "JobData for job '{}' is being dropped while the job fiber is still present.",
+            self.name
+        );
+
+        debug_assert!(
+            self.fiber_stack.lock2().is_none(),
+            "JobData for job '{}' is being dropped while the job fiber stack is still present..",
+            self.name
+        );
     }
 }
 

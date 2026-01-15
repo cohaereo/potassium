@@ -7,31 +7,31 @@ fn main() {
     // With job yielding, JobHandle::wait() will yield if called from within a job, preventing this deadlock.
     println!("Starting job 0");
     let scheduler_clone = scheduler.clone();
-    let job0 = scheduler
-        .job_builder("job_0")
+    let job1 = scheduler
+        .job_builder("job_1")
         .priority(Priority::Medium)
         .spawn(move || {
             println!("  Starting job 1");
             let scheduler_clone2 = scheduler_clone.clone();
-            let job1 = scheduler_clone
-                .job_builder("job_1")
+            let job2 = scheduler_clone
+                .job_builder("job_2")
                 .priority(Priority::Medium)
                 .spawn(move || {
                     println!("    Starting job 2");
-                    let job2 = scheduler_clone2
-                        .job_builder("job_2")
+                    let job3 = scheduler_clone2
+                        .job_builder("job_3")
                         .priority(Priority::Medium)
                         .spawn(|| {
                             println!("      Hello from job 3!");
                         });
-                    job2.wait();
+                    job3.wait();
                     println!("    Job 2 has finished");
                 });
-            job1.wait();
+            job2.wait();
             println!("  Job 1 has finished");
         });
 
-    job0.wait();
+    job1.wait();
     println!("Job 0 has finished");
 
     scheduler

@@ -2,7 +2,7 @@ use crossbeam_channel::Sender;
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use fibrous::{DefaultFiberApi, FiberApi, FiberStack};
 
-use crate::{JobHandle, Priority, Scheduler, fiber::FiberContext, job::JobState, util::MutexExt};
+use crate::{JobHandle, Priority, Scheduler, fiber::FiberContext, job::JobState};
 
 const MAX_BATCH_SIZE: usize = 32;
 
@@ -244,19 +244,6 @@ pub fn worker_thread(ctx: WorkerContext) {
         }
 
         if let Some(job) = ctx.fetch_job() {
-            // if matches!(job.state(), JobState::Completed | JobState::Running) {
-            //     panic!(
-            //         "Fetched job {} in invalid state {:?}. This indicates a bug in the scheduler, as running or completed jobs should not be re-scheduled.",
-            //         job.name(),
-            //         job.state()
-            //     );
-            // }
-
-            // // Execute the job
-            // let Some(job_body) = (unsafe { job.take_body() }) else {
-            //     panic!("Job body already taken for job {}", job.name());
-            // };
-
             if job.state() == JobState::New {
                 let stack = FiberStack::new(32 * 1024);
                 let job_handle_box = Box::new(job.clone());
@@ -265,15 +252,13 @@ pub fn worker_thread(ctx: WorkerContext) {
                     DefaultFiberApi::create_fiber(stack.as_pointer(), fiber_entry_point, user_data)
                 }
                 .expect("Failed to create fiber for job");
-                *job.inner.fiber_stack.lock2() = Some(stack);
-                *job.inner.fiber.lock2() = Some(fiber);
+                job.setup_fiber(fiber, stack);
             }
 
             match job.state() {
                 JobState::New | JobState::Yielded => {
                     let worker_fiber = FiberContext::worker_fiber().expect("Must have main fiber");
-                    // let current_fiber =
-                    let current_fiber = job.inner.fiber.lock2().expect("Job is missing fiber");
+                    let current_fiber = job.get_fiber().expect("Job must have fiber");
 
                     FiberContext::set_current_job(Some(job.clone()));
                     job.set_state(JobState::Running);
@@ -304,9 +289,10 @@ fn handle_job_return(ctx: &WorkerContext, job: JobHandle) {
     match job.state() {
         JobState::Completed => {
             // Job completed - clean up
-            if let Some(fiber) = job.inner.fiber.lock2().take() {
+            if job.get_fiber().is_some() {
+                // SAFETY: This is the only place where fibers are/should be freed after job completion
                 unsafe {
-                    DefaultFiberApi::destroy_fiber(fiber);
+                    job.free_fiber();
                 }
             }
 
@@ -388,9 +374,6 @@ unsafe extern "C" fn fiber_entry_point(user_data: *mut ()) {
 
         job.set_state(JobState::Completed);
 
-        // Clean up fiber stack
-        drop(job.inner.fiber_stack.lock2().take());
-
         FiberContext::set_current_job(None);
 
         // NOTE: *nothing* should be allocated after this scope, as the fiber will be destroyed upon returning, and thus nothing gets Dropped
@@ -398,7 +381,7 @@ unsafe extern "C" fn fiber_entry_point(user_data: *mut ()) {
 
     // Switch back to main fiber
     let main_fiber = FiberContext::worker_fiber().expect("Must have main fiber");
-    let current_fiber = job.inner.fiber.lock2().expect("Job must have fiber");
+    let current_fiber = job.get_fiber().expect("Job must have fiber");
     drop(job);
 
     unsafe {
