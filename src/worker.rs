@@ -2,7 +2,7 @@ use crossbeam_channel::Sender;
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use fibrous::{DefaultFiberApi, FiberApi, FiberStack};
 
-use crate::{JobHandle, Priority, Scheduler, fiber::FiberContext, job::JobState};
+use crate::{JobHandle, Priority, Scheduler, fiber::FiberContext, job::JobState, util::MutexExt};
 
 const MAX_BATCH_SIZE: usize = 32;
 
@@ -265,15 +265,15 @@ pub fn worker_thread(ctx: WorkerContext) {
                     DefaultFiberApi::create_fiber(stack.as_pointer(), fiber_entry_point, user_data)
                 }
                 .expect("Failed to create fiber for job");
-                unsafe { *job.inner.fiber_stack.get() = Some(stack) };
-                unsafe { *job.inner.fiber.get() = Some(fiber) };
+                *job.inner.fiber_stack.lock2() = Some(stack);
+                *job.inner.fiber.lock2() = Some(fiber);
             }
 
             match job.state() {
                 JobState::New | JobState::Yielded => {
                     let worker_fiber = FiberContext::worker_fiber().expect("Must have main fiber");
-                    let current_fiber =
-                        unsafe { *job.inner.fiber.get() }.expect("Job is missing fiber");
+                    // let current_fiber =
+                    let current_fiber = job.inner.fiber.lock2().expect("Job is missing fiber");
 
                     FiberContext::set_current_job(Some(job.clone()));
                     job.set_state(JobState::Running);
@@ -304,7 +304,7 @@ fn handle_job_return(ctx: &WorkerContext, job: JobHandle) {
     match job.state() {
         JobState::Completed => {
             // Job completed - clean up
-            if let Some(fiber) = unsafe { &mut *job.inner.fiber.get() }.take() {
+            if let Some(fiber) = job.inner.fiber.lock2().take() {
                 unsafe {
                     DefaultFiberApi::destroy_fiber(fiber);
                 }
@@ -381,7 +381,7 @@ unsafe extern "C" fn fiber_entry_point(user_data: *mut ()) {
         FiberContext::set_current_job(Some((*job).clone()));
         job.set_state(JobState::Running);
 
-        if let Some(job_body) = unsafe { job.take_body() } {
+        if let Some(job_body) = job.take_body() {
             profiling::scope!(job.name());
             (job_body)();
         }
@@ -389,7 +389,7 @@ unsafe extern "C" fn fiber_entry_point(user_data: *mut ()) {
         job.set_state(JobState::Completed);
 
         // Clean up fiber stack
-        drop(unsafe { &mut *job.inner.fiber_stack.get() }.take());
+        drop(job.inner.fiber_stack.lock2().take());
 
         FiberContext::set_current_job(None);
 
@@ -398,7 +398,7 @@ unsafe extern "C" fn fiber_entry_point(user_data: *mut ()) {
 
     // Switch back to main fiber
     let main_fiber = FiberContext::worker_fiber().expect("Must have main fiber");
-    let current_fiber = unsafe { *job.inner.fiber.get() }.expect("Job must have fiber");
+    let current_fiber = job.inner.fiber.lock2().expect("Job must have fiber");
     drop(job);
 
     unsafe {

@@ -5,6 +5,7 @@ use fibrous::{DefaultFiberApi, FiberApi, FiberHandle};
 use crate::{
     JobHandle, Scheduler,
     job::{JobState, JobWaker},
+    util::MutexExt,
 };
 
 pub(crate) struct FiberContext {
@@ -78,7 +79,7 @@ impl FiberContext {
                 return false;
             }
 
-            if let Some(current_fiber) = unsafe { *current_job.inner.fiber.get() } {
+            if let Some(current_fiber) = *current_job.inner.fiber.lock2() {
                 FiberContext::set_current_job(None);
                 current_job.set_state(JobState::Yielded);
                 // When we yield, the job leaves the scheduler's context, so mark it as not enqueued so any dependents can re-enqueue it when ready
@@ -90,7 +91,7 @@ impl FiberContext {
                     DefaultFiberApi::switch_to_fiber(current_fiber, main_fiber);
                 }
                 current_job.set_state(JobState::Running);
-                FiberContext::set_current_job(Some(current_job));
+                FiberContext::set_current_job(Some(current_job.clone()));
 
                 true
             } else {

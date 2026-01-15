@@ -1,4 +1,3 @@
-use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
@@ -9,7 +8,7 @@ use smallvec::SmallVec;
 use crate::Scheduler;
 use crate::builder::Priority;
 use crate::fiber::FiberContext;
-use crate::util::SharedString;
+use crate::util::{MutexExt, SharedString};
 
 /// A shared handle to a scheduled job.
 #[derive(Clone)]
@@ -19,7 +18,7 @@ pub struct JobHandle {
 
 pub(crate) struct JobData {
     name: SharedString,
-    body: UnsafeCell<Option<Box<dyn FnOnce() + Send + 'static>>>,
+    body: Mutex<Option<Box<dyn FnOnce() + Send + 'static>>>,
     pub(crate) priority: Priority,
 
     dependencies: SmallVec<[JobHandleWeak; 2]>,
@@ -27,8 +26,8 @@ pub(crate) struct JobData {
     pub(crate) remaining_dependencies: AtomicU32,
     pub(crate) enqueued: AtomicBool,
 
-    pub(crate) fiber_stack: UnsafeCell<Option<FiberStack>>,
-    pub(crate) fiber: UnsafeCell<Option<FiberHandle>>,
+    pub(crate) fiber_stack: Mutex<Option<FiberStack>>,
+    pub(crate) fiber: Mutex<Option<FiberHandle>>,
     state: AtomicJobState,
 }
 
@@ -43,15 +42,15 @@ impl JobHandle {
         let j = JobHandle {
             inner: Arc::new(JobData {
                 name: spec.name,
-                body: UnsafeCell::new(Some(Box::new(body))),
+                body: Mutex::new(Some(Box::new(body))),
                 priority: spec.priority,
                 remaining_dependencies: AtomicU32::new(spec.dependencies.len() as u32),
                 dependencies: spec.dependencies.iter().map(|d| d.downgrade()).collect(),
                 dependents: RwLock::new(SmallVec::new()),
                 enqueued: AtomicBool::new(false),
 
-                fiber_stack: UnsafeCell::new(None),
-                fiber: UnsafeCell::new(None),
+                fiber_stack: Mutex::new(None),
+                fiber: Mutex::new(None),
                 state: AtomicJobState::new(JobState::New),
             }),
         };
@@ -146,8 +145,8 @@ impl JobHandle {
         self.inner.state.store(new_state);
     }
 
-    pub(crate) unsafe fn take_body(&self) -> Option<Box<dyn FnOnce() + Send + 'static>> {
-        unsafe { (*self.inner.body.get()).take() }
+    pub(crate) fn take_body(&self) -> Option<Box<dyn FnOnce() + Send + 'static>> {
+        self.inner.body.lock().ok()?.take()
     }
 
     /// Waits for the job to complete.
@@ -405,8 +404,7 @@ impl<T> JobResult<T> {
     pub fn wait(self) -> T {
         self.handle.wait();
         self.result
-            .lock()
-            .unwrap()
+            .lock2()
             .take()
             .expect("Job did not produce a result")
     }

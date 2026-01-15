@@ -49,3 +49,14 @@ impl std::borrow::Borrow<str> for SharedString {
         }
     }
 }
+
+pub(crate) trait MutexExt<T> {
+    /// Locks the mutex, panicking if the mutex is poisoned.
+    fn lock2(&self) -> std::sync::MutexGuard<'_, T>;
+}
+
+impl<T> MutexExt<T> for std::sync::Mutex<T> {
+    fn lock2(&self) -> std::sync::MutexGuard<'_, T> {
+        self.lock().expect("Mutex poisoned")
+    }
+}

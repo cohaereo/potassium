@@ -2,6 +2,7 @@ use crossbeam_channel::Receiver;
 
 use crate::SchedulerConfiguration;
 use crate::job::{JobHandle, JobResult};
+use crate::util::MutexExt;
 use crate::worker::{Injectors, WorkQueues, WorkStealers, WorkerContext, WorkerId, worker_thread};
 use crate::{builder::JobBuilder, util::SharedString};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
@@ -197,7 +198,7 @@ impl Scheduler {
         let result_clone = result.clone();
 
         let handle = self.spawn(spec, move || {
-            *result_clone.lock().unwrap() = Some(body());
+            *result_clone.lock2() = Some(body());
         });
 
         JobResult { handle, result }
@@ -400,6 +401,7 @@ mod tests {
     use crate::WaitResult;
     use crate::builder::Priority;
     use crate::scheduler::Scheduler;
+    use crate::util::MutexExt;
 
     #[test]
     fn test_simple_jobs() {
@@ -469,7 +471,7 @@ mod tests {
                     .job_builder("priority_test")
                     .priority(priority)
                     .spawn(move || {
-                        ORDER.lock().unwrap().push(i);
+                        ORDER.lock2().push(i);
                     });
             }
         }
@@ -477,7 +479,7 @@ mod tests {
 
         scheduler.wait_for_all();
 
-        let order = ORDER.lock().unwrap();
+        let order = ORDER.lock2();
         assert_eq!(*order, vec![2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0]); // High priority (2) should execute first
     }
 
@@ -492,7 +494,7 @@ mod tests {
             .priority(Priority::Medium)
             .spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(50));
-                LOG.lock().unwrap().push("A");
+                LOG.lock2().push("A");
             });
 
         let job_b = scheduler
@@ -501,7 +503,7 @@ mod tests {
             .dependencies(vec![job_a])
             .spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(70));
-                LOG.lock().unwrap().push("B");
+                LOG.lock2().push("B");
             });
 
         let job_c = scheduler
@@ -509,7 +511,7 @@ mod tests {
             .priority(Priority::Medium)
             .dependencies(vec![job_b])
             .spawn(|| {
-                LOG.lock().unwrap().push("C");
+                LOG.lock2().push("C");
             });
 
         let _job_d = scheduler
@@ -517,12 +519,12 @@ mod tests {
             .priority(Priority::Medium)
             .dependencies(vec![job_c])
             .spawn(|| {
-                LOG.lock().unwrap().push("D");
+                LOG.lock2().push("D");
             });
 
         scheduler.wait_for_all();
 
-        let log = LOG.lock().unwrap();
+        let log = LOG.lock2();
         assert_eq!(*log, vec!["A", "B", "C", "D"]); // Jobs should execute in order A -> B -> C
     }
 
@@ -571,7 +573,7 @@ mod tests {
     //             CONDITION_MET.load(std::sync::atomic::Ordering::SeqCst)
     //         })
     //         .spawn(|| {
-    //             LOG.lock().push("Conditional Job Executed");
+    //             LOG.lock2().push("Conditional Job Executed");
     //         });
 
     //     // Schedule a job to set the condition after a delay
@@ -584,7 +586,7 @@ mod tests {
 
     //     scheduler.wait_for_all();
 
-    //     let log = LOG.lock();
+    //     let log = LOG.lock2();
     //     assert_eq!(*log, vec!["Conditional Job Executed"]); // Conditional job should execute after condition is met
     //     // TODO(cohae): "Condition was checked 10780 times". We need to reduce the amount of times the conditions are checked (eg. move waiting jobs to a separate queue?)
     //     println!(
