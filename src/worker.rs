@@ -257,6 +257,7 @@ pub fn worker_thread(ctx: WorkerContext) {
 
             match job.state() {
                 JobState::New | JobState::Yielded => {
+                    profiling::scope!(job.name());
                     let worker_fiber = FiberContext::worker_fiber().expect("Must have main fiber");
                     let current_fiber = job.get_fiber().expect("Job must have fiber");
 
@@ -368,7 +369,6 @@ unsafe extern "C" fn fiber_entry_point(user_data: *mut ()) {
         job.set_state(JobState::Running);
 
         if let Some(job_body) = job.take_body() {
-            profiling::scope!(job.name());
             (job_body)();
         }
 
