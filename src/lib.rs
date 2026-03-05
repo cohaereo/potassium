@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-#![warn(missing_docs, clippy::missing_safety_doc)]
+#![deny(missing_docs, clippy::missing_safety_doc)]
 
 mod builder;
 mod config;
@@ -41,6 +41,7 @@ pub fn current_scheduler() -> Option<Scheduler> {
     FiberContext::scheduler()
 }
 
+/// Returns the worker index, if inside a worker context
 pub fn current_worker_index() -> Option<usize> {
     FiberContext::current_worker_index()
 }
