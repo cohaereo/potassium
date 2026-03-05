@@ -29,7 +29,11 @@ fn main() {
                 .priority(priority)
                 .spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(100 + i as u64 * 10));
-                    println!("Small job {i} completed (priority {priority:?})");
+                    let worker_index =
+                        potassium::current_worker_index().expect("we're running inside a worker");
+                    println!(
+                        "Small job {i} completed by worker {worker_index} (priority {priority:?})"
+                    );
                 })
         })
         .collect();

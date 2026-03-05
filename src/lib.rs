@@ -40,3 +40,7 @@ pub fn current_job() -> Option<JobHandle> {
 pub fn current_scheduler() -> Option<Scheduler> {
     FiberContext::scheduler()
 }
+
+pub fn current_worker_index() -> Option<usize> {
+    FiberContext::current_worker_index()
+}

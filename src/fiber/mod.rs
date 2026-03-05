@@ -10,6 +10,9 @@ use crate::{
 };
 
 pub(crate) struct FiberContext {
+    /// Worker index, unique to all workers in the same scheduler
+    pub worker_index: usize,
+
     /// The handle to the worker thread's fiber.
     pub worker_fiber: FiberHandle,
 
@@ -26,12 +29,13 @@ thread_local! {
 }
 
 impl FiberContext {
-    pub(crate) fn initialize_worker_thread(scheduler: Scheduler) {
+    pub(crate) fn initialize_worker_thread(scheduler: Scheduler, index: usize) {
         FIBER_CONTEXT.with(|ctx| {
             let worker_fiber = unsafe { DefaultFiberApi::convert_thread_to_fiber() }
                 .expect("Failed to convert thread to fiber");
 
             *ctx.borrow_mut() = Some(FiberContext {
+                worker_index: index,
                 worker_fiber,
                 current_job: None,
                 scheduler,
@@ -49,6 +53,10 @@ impl FiberContext {
                 c.current_job = job;
             }
         });
+    }
+
+    pub fn current_worker_index() -> Option<usize> {
+        FIBER_CONTEXT.with(|ctx| ctx.borrow().as_ref().map(|c| c.worker_index))
     }
 
     pub fn worker_fiber() -> Option<FiberHandle> {

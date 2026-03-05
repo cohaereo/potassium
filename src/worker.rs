@@ -214,8 +214,8 @@ impl WorkerContext {
     }
 }
 
-pub fn worker_thread(ctx: WorkerContext) {
-    FiberContext::initialize_worker_thread(ctx.scheduler.clone());
+pub fn worker_thread(ctx: WorkerContext, index: usize) {
+    FiberContext::initialize_worker_thread(ctx.scheduler.clone(), index);
 
     loop {
         if ctx.is_exiting() {

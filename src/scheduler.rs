@@ -99,7 +99,10 @@ impl Scheduler {
                         // log::error!("Failed to set thread priority: {}", e);
                     }
 
-                    worker_thread(WorkerContext::new(scheduler, queues, free_queue_tx_clone));
+                    worker_thread(
+                        WorkerContext::new(scheduler, queues, free_queue_tx_clone),
+                        i,
+                    );
                 })
                 .expect("Failed to spawn scheduler thread");
             state
