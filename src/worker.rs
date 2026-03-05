@@ -369,8 +369,19 @@ unsafe extern "C" fn fiber_entry_point(user_data: *mut ()) {
         FiberContext::set_current_job(Some((*job).clone()));
         job.set_state(JobState::Running);
 
-        if let Some(job_body) = job.take_body() {
-            (job_body)();
+        // Run the job body inside catch_unwind to avoid unwinding across the fiber boundary.
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(job_body) = job.take_body() {
+                (job_body)();
+            }
+        }));
+
+        if let Err(payload) = res {
+            eprintln!(
+                "Job '{}' panicked on its fiber. Aborting job and cleaning up. payload={:?}",
+                job.name(),
+                payload
+            );
         }
 
         job.set_state(JobState::Completed);
