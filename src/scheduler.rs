@@ -6,6 +6,8 @@ use crate::job::{JobHandle, JobResult};
 use crate::util::MutexExt;
 use crate::worker::{Injectors, WorkQueues, WorkStealers, WorkerContext, WorkerId, worker_thread};
 use crate::{builder::JobBuilder, util::SharedString};
+#[cfg(feature = "events")]
+use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
@@ -14,6 +16,9 @@ pub(crate) struct SchedulerState {
     worker_threads: RwLock<Vec<JoinHandle<()>>>,
     next_thread_to_wake: AtomicUsize,
     num_workers: usize,
+
+    #[cfg(feature = "events")]
+    event_handler: Mutex<Option<Weak<dyn crate::EventHandler>>>,
 
     /// Number of jobs currently queued or running
     pub(crate) num_jobs_queued: AtomicUsize,
@@ -64,6 +69,10 @@ impl Scheduler {
             worker_threads: RwLock::new(Vec::with_capacity(num_workers)),
             next_thread_to_wake: AtomicUsize::new(0),
             num_workers,
+
+            #[cfg(feature = "events")]
+            event_handler: Mutex::new(None),
+
             injectors: Injectors::new(),
             stealers,
             stack_pool: FiberStackPool::new(
@@ -355,6 +364,27 @@ impl Scheduler {
     pub fn shutdown_graceful(&self) {
         self.wait_for_all();
         self.shutdown();
+    }
+
+    #[cfg(feature = "events")]
+    /// Sets the event handler for the scheduler.
+    ///
+    /// The handler is called from within the worker threads, so it's recommended to defer/offload expensive operations in the handler.
+    pub fn set_event_handler(&self, handler: Option<Weak<dyn crate::EventHandler>>) {
+        *self.inner.event_handler.lock2() = handler;
+    }
+
+    #[cfg(feature = "events")]
+    pub(crate) fn send_event(&self, event: crate::Event) {
+        if let Some(handler) = self
+            .inner
+            .event_handler
+            .lock2()
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+        {
+            handler.handle_event(event);
+        }
     }
 }
 

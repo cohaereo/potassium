@@ -4,6 +4,11 @@ fn main() {
     let scheduler = Scheduler::default();
     println!("Running with {} workers", scheduler.num_workers());
 
+    #[cfg(feature = "events")]
+    let chrome_renderer = std::sync::Arc::new(potassium::ChromeTraceRenderer::default());
+    #[cfg(feature = "events")]
+    scheduler.set_event_handler(Some(std::sync::Arc::downgrade(&chrome_renderer) as _));
+
     let long_job = scheduler
         .job_builder("long_job")
         .priority(Priority::Low)
@@ -58,4 +63,9 @@ fn main() {
     scheduler.wait_for_all();
     println!("All jobs completed.");
     scheduler.shutdown();
+
+    #[cfg(feature = "events")]
+    if std::fs::write("trace.json", chrome_renderer.render()).is_ok() {
+        println!("Trace saved to trace.json");
+    }
 }

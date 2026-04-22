@@ -33,3 +33,4 @@ debug = true
 [features]
 # Use a FIFO queue instead of a LIFO queue for worker threads.
 fifo = []
+events = []

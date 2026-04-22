@@ -214,8 +214,8 @@ impl WorkerContext {
     }
 }
 
-pub fn worker_thread(ctx: WorkerContext, index: usize) {
-    FiberContext::initialize_worker_thread(ctx.scheduler.clone(), index);
+pub fn worker_thread(ctx: WorkerContext, worker_index: usize) {
+    FiberContext::initialize_worker_thread(ctx.scheduler.clone(), worker_index);
 
     loop {
         if ctx.is_exiting() {
@@ -259,6 +259,19 @@ pub fn worker_thread(ctx: WorkerContext, index: usize) {
 
             match job.state() {
                 JobState::New | JobState::Yielded => {
+                    #[cfg(feature = "events")]
+                    match job.state() {
+                        JobState::New => ctx.scheduler.send_event(crate::Event::JobStarted {
+                            worker_id: worker_index,
+                            handle: job.clone(),
+                        }),
+                        JobState::Yielded => ctx.scheduler.send_event(crate::Event::JobResumed {
+                            worker_id: worker_index,
+                            handle: job.clone(),
+                        }),
+                        _ => {}
+                    }
+
                     profiling::scope!(job.name());
                     let worker_fiber = FiberContext::worker_fiber().expect("Must have main fiber");
                     let current_fiber = job.get_fiber().expect("Job must have fiber");
@@ -270,7 +283,7 @@ pub fn worker_thread(ctx: WorkerContext, index: usize) {
                         DefaultFiberApi::switch_to_fiber(worker_fiber, current_fiber);
                     }
 
-                    handle_job_return(&ctx, job);
+                    handle_job_return(&ctx, job, worker_index);
                 }
                 JobState::Running | JobState::Completed => {
                     panic!(
@@ -288,7 +301,25 @@ pub fn worker_thread(ctx: WorkerContext, index: usize) {
     }
 }
 
-fn handle_job_return(ctx: &WorkerContext, job: JobHandle) {
+fn handle_job_return(ctx: &WorkerContext, job: JobHandle, worker_id: usize) {
+    #[cfg(not(feature = "events"))]
+    {
+        _ = worker_id;
+    }
+
+    #[cfg(feature = "events")]
+    match job.state() {
+        JobState::Yielded => ctx.scheduler.send_event(crate::Event::JobYielded {
+            worker_id,
+            handle: job.clone(),
+        }),
+        JobState::Completed => ctx.scheduler.send_event(crate::Event::JobCompleted {
+            worker_id,
+            handle: job.clone(),
+        }),
+        _ => {}
+    }
+
     match job.state() {
         JobState::Completed => {
             // Job completed - clean up

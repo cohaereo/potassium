@@ -9,6 +9,11 @@ mod scheduler;
 mod util;
 mod worker;
 
+#[cfg(feature = "events")]
+mod events;
+#[cfg(feature = "events")]
+pub use events::{Event, EventHandler, chrome::ChromeTraceRenderer, mermaid::MermaidRenderer};
+
 pub use builder::{JobBuilder, Priority};
 pub use config::{SchedulerConfiguration, ThreadPriority, WorkerConfiguration};
 pub use job::{JobHandle, JobHandleWeak, JobResult, JobWaker, WaitResult};

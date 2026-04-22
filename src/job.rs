@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
@@ -301,6 +302,15 @@ impl JobHandle {
         JobHandleWeak {
             inner: Arc::downgrade(&self.inner),
         }
+    }
+}
+
+impl Debug for JobHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JobHandle")
+            .field("name", &self.inner.name)
+            .field("priority", &self.inner.priority)
+            .finish()
     }
 }
 
