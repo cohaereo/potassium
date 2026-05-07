@@ -1,6 +1,7 @@
 #[cfg(windows)]
 mod windows_handler {
     use crate::fiber::stack::FIBER_GUARD_PAGES;
+    use crate::util::MutexExt;
 
     use windows_sys::Win32::Foundation::{
         EXCEPTION_ACCESS_VIOLATION, EXCEPTION_STACK_OVERFLOW, STATUS_GUARD_PAGE_VIOLATION,
@@ -26,20 +27,18 @@ mod windows_handler {
             _ => return EXCEPTION_CONTINUE_SEARCH,
         };
 
-        if let Some(pages) = FIBER_GUARD_PAGES.get() {
-            for &(start, end) in pages.iter() {
-                if fault_addr >= start && fault_addr < end {
-                    const MSG: &[u8] = b"fatal: fiber stack overflow\n\0";
-                    unsafe {
-                        windows_sys::Win32::Storage::FileSystem::WriteFile(
-                            GetStdHandle(STD_ERROR_HANDLE),
-                            MSG.as_ptr() as *const _,
-                            MSG.len() as u32,
-                            std::ptr::null_mut(),
-                            std::ptr::null_mut(),
-                        );
-                        windows_sys::Win32::System::Threading::ExitProcess(1);
-                    }
+        for &(start, end) in FIBER_GUARD_PAGES.lock2().iter() {
+            if fault_addr >= start && fault_addr < end {
+                const MSG: &[u8] = b"fatal: fiber stack overflow\n\0";
+                unsafe {
+                    windows_sys::Win32::Storage::FileSystem::WriteFile(
+                        GetStdHandle(STD_ERROR_HANDLE),
+                        MSG.as_ptr() as *const _,
+                        MSG.len() as u32,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    );
+                    windows_sys::Win32::System::Threading::ExitProcess(1);
                 }
             }
         }
@@ -64,18 +63,17 @@ mod unix_handler {
     };
 
     use crate::fiber::stack::FIBER_GUARD_PAGES;
+    use crate::util::MutexExt;
 
     extern "C" fn sigsegv_handler(_sig: c_int, info: *mut siginfo_t, _ctx: *mut c_void) {
         let fault_addr = unsafe { (*info).si_addr() } as usize;
 
-        if let Some(pages) = FIBER_GUARD_PAGES.get() {
-            for &(start, end) in pages.iter() {
-                if fault_addr >= start && fault_addr < end {
-                    const MSG: &[u8] = b"fatal: fiber stack overflow\n";
-                    unsafe {
-                        write(STDERR_FILENO, MSG.as_ptr() as *const c_void, MSG.len());
-                        libc::abort();
-                    }
+        for &(start, end) in FIBER_GUARD_PAGES.lock2().iter() {
+            if fault_addr >= start && fault_addr < end {
+                const MSG: &[u8] = b"fatal: fiber stack overflow\n";
+                unsafe {
+                    write(STDERR_FILENO, MSG.as_ptr() as *const c_void, MSG.len());
+                    libc::abort();
                 }
             }
         }

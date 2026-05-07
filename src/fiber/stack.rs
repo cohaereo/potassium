@@ -1,9 +1,11 @@
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 use crossbeam_queue::ArrayQueue;
 use fibrous::FiberStack;
 
-pub(crate) static FIBER_GUARD_PAGES: OnceLock<Box<[(usize, usize)]>> = OnceLock::new();
+use crate::util::MutexExt;
+
+pub(crate) static FIBER_GUARD_PAGES: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 
 /// Reusable stack manager for job fibers.
 pub struct FiberStackPool {
@@ -25,9 +27,7 @@ impl FiberStackPool {
             _ = stacks.push(stack);
         }
 
-        FIBER_GUARD_PAGES
-            .set(guard_pages.into_boxed_slice())
-            .expect("FiberStackPool is already initialized!");
+        *FIBER_GUARD_PAGES.lock2() = guard_pages;
 
         FiberStackPool { stacks }
     }
