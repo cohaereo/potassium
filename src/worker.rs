@@ -2,7 +2,11 @@ use crossbeam_channel::Sender;
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use fibrous::{DefaultFiberApi, FiberApi};
 
-use crate::{JobHandle, Priority, Scheduler, fiber::FiberContext, job::JobState};
+use crate::{
+    JobHandle, Priority, Scheduler,
+    fiber::{FiberContext, stack_guard::install_stack_overflow_handler},
+    job::JobState,
+};
 
 const MAX_BATCH_SIZE: usize = 32;
 
@@ -216,6 +220,7 @@ impl WorkerContext {
 
 pub fn worker_thread(ctx: WorkerContext, worker_index: usize) {
     FiberContext::initialize_worker_thread(ctx.scheduler.clone(), worker_index);
+    install_stack_overflow_handler();
 
     loop {
         if ctx.is_exiting() {

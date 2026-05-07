@@ -1,4 +1,5 @@
 pub mod stack;
+pub(crate) mod stack_guard;
 
 use std::cell::RefCell;
 
