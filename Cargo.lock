@@ -255,9 +255,9 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fibrous"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32f744674521652b78cfdc8c09c76a2d6ec5a5eefbe2750b60a64c014bafcd75"
+checksum = "ace94ac08fa292d3f4b064bd8635686aa74d4784046074d567a07179cc5f7378"
 dependencies = [
  "cfg-if",
  "context",
